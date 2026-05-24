@@ -70,7 +70,7 @@ struct LightStateDef {
 }
 
 let STATES: [String: LightStateDef] = [
-    "idle":     LightStateDef(red: false, yellow: false, green: true,  blink: false, label: "完成"),
+    "idle":     LightStateDef(red: false, yellow: false, green: true,  blink: false, label: "空闲中"),
     "thinking": LightStateDef(red: false, yellow: true,  green: false, blink: false, label: "思考中"),
     "working":  LightStateDef(red: true,  yellow: false, green: false, blink: true,  label: "执行中"),
     "fixing":   LightStateDef(red: false, yellow: true,  green: false, blink: true,  label: "修复中"),
@@ -1121,11 +1121,11 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func buildRulesTab(_ view: NSView) {
         var y: CGFloat = 540
         let rules = [
-            ("🟢 绿灯常亮", "完成 / 空闲", "任务完成，当前无操作。纯色常亮不闪烁。"),
+            ("🟢 绿灯常亮", "空闲中", "当前无操作，AI 待命中。纯色常亮不闪烁。"),
             ("🟡 黄灯呼吸", "思考中", "AI 正在读代码、分析逻辑、检索上下文。亮度在 30%~100% 间 sin 曲线平滑呼吸。"),
             ("🔴 红灯快闪", "执行中", "AI 正在调用工具（Bash/Read/Edit 等）。高频开关约 4Hz，表示激烈操作中。"),
+            ("🔴 红灯慢闪", "报错 / 异常", "会话异常终止。低频慢闪约 0.5Hz，警告级节奏。"),
             ("🟡 黄灯流水", "修复中", "工具调用失败后自动重试。中等频率闪烁，表示正在迭代修复代码。"),
-            ("🔴 红灯慢闪", "报错 / 异常", "Claude Code 会话异常终止。低频慢闪约 0.5Hz，警告级节奏。"),
         ]
 
         for (title, subtitle, desc) in rules {

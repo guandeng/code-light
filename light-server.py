@@ -26,7 +26,7 @@ STATE_ERROR = "error"
 SEVERITY = {STATE_ERROR: 4, STATE_WORKING: 3, STATE_FIXING: 3, STATE_THINKING: 2, STATE_IDLE: 0}
 
 LIGHT_COLORS = {
-    STATE_IDLE:     {"red": 0, "yellow": 0, "green": 1, "label": "完成",   "css": "#00B329", "blink": False},
+    STATE_IDLE:     {"red": 0, "yellow": 0, "green": 1, "label": "空闲中", "css": "#00B329", "blink": False},
     STATE_THINKING: {"red": 0, "yellow": 1, "green": 0, "label": "思考中", "css": "#FFCC00", "blink": False},
     STATE_WORKING:  {"red": 1, "yellow": 0, "green": 0, "label": "执行中", "css": "#D90000", "blink": True},
     STATE_FIXING:   {"red": 0, "yellow": 1, "green": 0, "label": "修复中", "css": "#FFCC00", "blink": True},
