@@ -7,6 +7,7 @@ CodeLight 红绿灯可视化服务（多实例版）
 
 import os
 import time
+from collections import deque
 from flask import Flask, jsonify, request
 
 # ============================================================
@@ -37,7 +38,7 @@ app = Flask(__name__)
 
 # 多会话状态存储: {session_id: {state, message, timestamp, light}}
 sessions = {}
-state_history = []
+state_history = deque(maxlen=MAX_HISTORY)
 MAX_HISTORY = 100
 SESSION_TIMEOUT = 300  # 5分钟无更新自动降为idle
 
@@ -181,8 +182,6 @@ def update_state():
         "session_id": session_id[:8],
         "light": light,
     })
-    if len(state_history) > MAX_HISTORY:
-        state_history.pop(0)
 
     print(f"[状态] [{session_id[:8]}] {state} — {light['label']} {message}")
     return jsonify({"ok": True, "current": agg})
@@ -227,4 +226,4 @@ if __name__ == "__main__":
     print(f"地址: http://localhost:{SERVER_PORT}")
     print(f"支持多 Claude Code 会话并行")
     print("=" * 50)
-    app.run(host="0.0.0.0", port=SERVER_PORT, debug=False)
+    app.run(host="127.0.0.1", port=SERVER_PORT, debug=False)

@@ -14,7 +14,7 @@ struct AppConfig {
     var blinkSpeed = 0.6
     var theme = "dark"
     var autoLaunch = false
-    var showInDock = false
+    var showInDock = true
     var isFloating = true
     var notifyOnDone = true
     var showOnFullscreen = true
@@ -23,6 +23,7 @@ struct AppConfig {
     var windowSize: Double = 40
     var windowX: Double?
     var windowY: Double?
+    var edgeBar: String?  // "left" | "right" | nil
 
     static func load() -> AppConfig {
         let ud = UserDefaults.standard
@@ -42,6 +43,7 @@ struct AppConfig {
         if ud.double(forKey: "windowSize") > 0 { c.windowSize = ud.double(forKey: "windowSize") }
         if ud.object(forKey: "windowX") != nil { c.windowX = ud.double(forKey: "windowX") }
         if ud.object(forKey: "windowY") != nil { c.windowY = ud.double(forKey: "windowY") }
+        if let v = ud.string(forKey: "edgeBar") { c.edgeBar = v }
         return c
     }
 
@@ -62,6 +64,7 @@ struct AppConfig {
         ud.set(windowSize, forKey: "windowSize")
         if let x = windowX { ud.set(x, forKey: "windowX") }
         if let y = windowY { ud.set(y, forKey: "windowY") }
+        if let v = edgeBar { ud.set(v, forKey: "edgeBar") } else { ud.removeObject(forKey: "edgeBar") }
     }
 }
 
@@ -95,6 +98,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var lastActiveCount = 0
     var currentBlink = false
     var animPhase: CGFloat = 0  // 动画相位 0~1 循环
+    var isRebuilding = false
     var pollTimer: Timer?
     var animTimer: Timer?
     var marqueeText: String = ""
@@ -119,13 +123,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(config.showInDock ? .regular : .accessory)
         UNUserNotificationCenter.current().delegate = self
-        NSUserNotificationCenter.default.delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             self.log("[通知] UN权限: \(granted), err: \(String(describing: error))")
         }
         startServer()
         buildMenuBar()
         buildLightWindow()
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.buildLightWindow()
+        }
         startTimers()
         pollState()
         log("[启动] OK")
@@ -147,29 +153,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["python3", scriptPath]
-        // 检查 flask 是否安装
-        let check = Process()
-        check.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        check.arguments = ["python3", "-c", "import flask"]
-        do {
-            try check.run()
-            check.waitUntilExit()
-            if check.terminationStatus != 0 {
-                log("[服务] 安装 flask...")
-                let install = Process()
-                install.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                install.arguments = ["python3", "-m", "pip", "install", "flask", "--break-system-packages", "--quiet"]
-                try? install.run()
-                install.waitUntilExit()
-            }
-        } catch { log("[服务] 检查 flask 失败: \(error)") }
 
-        do {
-            try process.run()
-            serverProcess = process
-            log("[服务] Python 服务已启动: \(scriptPath)")
-        } catch {
-            log("[服务] 启动失败: \(error)")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let check = Process()
+            check.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            check.arguments = ["python3", "-c", "import flask"]
+            do {
+                try check.run()
+                check.waitUntilExit()
+                if check.terminationStatus != 0 {
+                    self.log("[服务] 安装 flask...")
+                    let install = Process()
+                    install.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                    install.arguments = ["python3", "-m", "pip", "install", "flask", "--break-system-packages", "--quiet"]
+                    try? install.run()
+                    install.waitUntilExit()
+                }
+            } catch { self.log("[服务] 检查 flask 失败: \(error)") }
+
+            DispatchQueue.main.async {
+                do {
+                    try process.run()
+                    self.serverProcess = process
+                    self.log("[服务] Python 服务已启动: \(scriptPath)")
+                } catch {
+                    self.log("[服务] 启动失败: \(error)")
+                }
+            }
         }
     }
 
@@ -264,10 +275,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func buildLightWindow() {
+        isRebuilding = true
+        defer { isRebuilding = false }
         let initSize = CGFloat(config.windowSize)
+        let isEdgeBar = config.edgeBar != nil
         let lightW: CGFloat, lightH: CGFloat
         let statusH: CGFloat = config.showStatusText ? 26 : 0
-        if config.horizontal {
+        if isEdgeBar {
+            lightW = 10
+            lightH = initSize * 3 + 14 * 2 - 28
+        } else if config.horizontal {
             lightW = initSize * 3 + 14 * 2 + 18 * 2
             lightH = initSize + 40 + statusH
         } else {
@@ -275,75 +292,108 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             lightH = initSize * 3 + 14 * 2 + 18 * 2 + (config.showStatusText ? 32 : 0)
         }
         let screen = NSScreen.main!.frame
-        let defaultX = screen.width - lightW - 16
-        let defaultY = screen.height - lightH - 80
-        let posX = config.windowX ?? defaultX
-        let posY = config.windowY ?? defaultY
+        let screenVisible = NSScreen.main!.visibleFrame
+        let defaultX: CGFloat, defaultY: CGFloat
+        if isEdgeBar {
+            if config.edgeBar == "left" {
+                defaultX = screen.minX
+            } else {
+                defaultX = screen.maxX - lightW
+            }
+            defaultY = screen.midY - lightH / 2
+        } else {
+            defaultX = screen.width - lightW - 16
+            defaultY = screen.height - lightH - 80
+        }
+        let posX: CGFloat = isEdgeBar ? defaultX : (config.windowX ?? defaultX)
+        let posY: CGFloat = config.windowY ?? defaultY
 
-        if lightWindow != nil { lightWindow.close() }
+        if lightWindow != nil {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didMoveNotification, object: lightWindow)
+            lightWindow.close()
+        }
 
+        let edgeBarStyle: NSWindow.StyleMask = isEdgeBar ? [.nonactivatingPanel, .fullSizeContentView] : [.nonactivatingPanel, .resizable, .fullSizeContentView]
         lightWindow = NSPanel(
             contentRect: NSRect(x: posX, y: posY, width: lightW, height: lightH),
-            styleMask: [.nonactivatingPanel, .resizable, .fullSizeContentView],
+            styleMask: edgeBarStyle,
             backing: .buffered, defer: false
         )
         lightWindow.level = config.isFloating ? (config.showOnFullscreen ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow))) : .floating) : .normal
         lightWindow.collectionBehavior = config.showOnFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : []
         lightWindow.isMovableByWindowBackground = true
         lightWindow.isOpaque = false; lightWindow.hasShadow = true
-        lightWindow.minSize = NSSize(width: 60, height: 120)
+        lightWindow.minSize = isEdgeBar ? NSSize(width: 10, height: 100) : NSSize(width: 60, height: 120)
         lightWindow.backgroundColor = .clear
 
         let view = lightWindow.contentView!
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: config.opacity).cgColor
-        view.layer?.cornerRadius = min(lightW, lightH) / 2
+        view.layer?.cornerRadius = isEdgeBar ? 3 : min(lightW, lightH) / 2
         view.layer?.masksToBounds = true
 
-        let shell = ShellView(frame: view.bounds)
-        shell.autoresizingMask = [.width, .height]
-        view.addSubview(shell)
+        if isEdgeBar {
+            // Edge bar: three colored segments stacked vertically
+            let segH = lightH / 3
+            redView = RealTrafficLightView()
+            redView.lampColor = NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)
+            redView.frame = NSRect(x: 0, y: segH * 2, width: lightW, height: segH)
+            yellowView = RealTrafficLightView()
+            yellowView.lampColor = NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 1.0)
+            yellowView.frame = NSRect(x: 0, y: segH, width: lightW, height: segH)
+            greenView = RealTrafficLightView()
+            greenView.lampColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
+            greenView.frame = NSRect(x: 0, y: 0, width: lightW, height: segH)
+            view.addSubview(redView)
+            view.addSubview(yellowView)
+            view.addSubview(greenView)
+        } else {
+            let shell = ShellView(frame: view.bounds)
+            shell.autoresizingMask = [.width, .height]
+            view.addSubview(shell)
 
-        // 自适应容器
-        let container = TrafficLightContainer(frame: view.bounds)
-        container.isHorizontal = config.horizontal
-        container.showStatusText = config.showStatusText
-        container.autoresizingMask = [.width, .height]
-        view.addSubview(container)
+            let container = TrafficLightContainer(frame: view.bounds)
+            container.isHorizontal = config.horizontal
+            container.showStatusText = config.showStatusText
+            container.autoresizingMask = [.width, .height]
+            view.addSubview(container)
 
-        redView = RealTrafficLightView()
-        redView.lampColor = NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)  // #D90000 国标红灯
+            redView = RealTrafficLightView()
+            redView.lampColor = NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)
 
-        yellowView = RealTrafficLightView()
-        yellowView.lampColor = NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 1.0)  // #FFCC00 国标黄灯
+            yellowView = RealTrafficLightView()
+            yellowView.lampColor = NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 1.0)
 
-        greenView = RealTrafficLightView()
-        greenView.lampColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)  // #00B329 国标绿灯
+            greenView = RealTrafficLightView()
+            greenView.lampColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
 
-        container.addSubview(redView)
-        container.addSubview(yellowView)
-        container.addSubview(greenView)
-        container.redView = redView
-        container.yellowView = yellowView
-        container.greenView = greenView
+            container.addSubview(redView)
+            container.addSubview(yellowView)
+            container.addSubview(greenView)
+            container.redView = redView
+            container.yellowView = yellowView
+            container.greenView = greenView
+            container.layout()
+        }
 
-        statusLabel = NSTextField(frame: NSRect(x: 0, y: 6, width: view.bounds.width, height: 18))
-        statusLabel.isEditable = false; statusLabel.isBordered = false
-        statusLabel.backgroundColor = .clear
-        statusLabel.textColor = NSColor(white: 0.55, alpha: 0.6)
-        statusLabel.alignment = .center
-        statusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        statusLabel.stringValue = "..."
-        statusLabel.autoresizingMask = []
-        statusLabel.cell?.truncatesLastVisibleLine = true
-        statusLabel.isHidden = !config.showStatusText
-        view.addSubview(statusLabel)
-        // tooltip 区域：覆盖整个底部文字区域
-        let tooltipArea = NSView(frame: NSRect(x: 0, y: 0, width: view.bounds.width, height: 28))
-        tooltipArea.autoresizingMask = [.width]
-        tooltipArea.isHidden = !config.showStatusText
-        view.addSubview(tooltipArea)
-        self.tooltipView = tooltipArea
+        if !isEdgeBar {
+            statusLabel = NSTextField(frame: NSRect(x: 0, y: 6, width: view.bounds.width, height: 18))
+            statusLabel.isEditable = false; statusLabel.isBordered = false
+            statusLabel.backgroundColor = .clear
+            statusLabel.textColor = NSColor(white: 0.55, alpha: 0.6)
+            statusLabel.alignment = .center
+            statusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+            statusLabel.stringValue = "..."
+            statusLabel.autoresizingMask = []
+            statusLabel.cell?.truncatesLastVisibleLine = true
+            statusLabel.isHidden = !config.showStatusText
+            view.addSubview(statusLabel)
+            let tooltipArea = NSView(frame: NSRect(x: 0, y: 0, width: view.bounds.width, height: 28))
+            tooltipArea.autoresizingMask = [.width]
+            tooltipArea.isHidden = !config.showStatusText
+            view.addSubview(tooltipArea)
+            self.tooltipView = tooltipArea
+        }
 
         let rightMenu = NSMenu()
         rightMenu.addItem(withTitle: "切换悬浮", action: #selector(toggleFloating), keyEquivalent: "")
@@ -353,13 +403,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         view.menu = rightMenu
 
         lightWindow.makeKeyAndOrderFront(nil)
-        container.layout()
 
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: lightWindow, queue: .main) { [weak self] _ in
             guard let self = self, let w = self.lightWindow else { return }
-            self.config.windowX = Double(w.frame.origin.x)
-            self.config.windowY = Double(w.frame.origin.y)
-            self.config.save()
+            guard !self.isRebuilding else { return }
+            guard let screen = NSScreen.main else { return }
+            let sf = screen.frame
+            let wf = w.frame
+            let snap: CGFloat = 20
+
+            var newEdgeBar: String? = self.config.edgeBar
+
+            if wf.minX - sf.minX < snap {
+                newEdgeBar = "left"
+            } else if sf.maxX - wf.maxX < snap {
+                newEdgeBar = "right"
+            } else if self.config.edgeBar != nil {
+                newEdgeBar = nil
+            }
+
+            if newEdgeBar != self.config.edgeBar {
+                self.config.edgeBar = newEdgeBar
+                self.config.windowX = Double(wf.midX)
+                self.config.windowY = Double(wf.midY)
+                self.config.save()
+                self.buildLightWindow()
+                return
+            }
+
+            // Normal mode: snap to edge
+            if self.config.edgeBar == nil {
+                var origin = wf.origin
+                if wf.minX - sf.minX < snap { origin.x = sf.minX }
+                else if sf.maxX - wf.maxX < snap { origin.x = sf.maxX - wf.width }
+                if origin != wf.origin { w.setFrameOrigin(origin) }
+                self.config.windowX = Double(origin.x)
+                self.config.windowY = Double(origin.y)
+                self.config.save()
+            }
         }
     }
 
@@ -438,7 +519,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 跑马灯：文字超过可见宽度时滚动（文字隐藏时跳过）
-        if !marqueeText.isEmpty && !statusLabel.isHidden {
+        if !marqueeText.isEmpty && statusLabel != nil && !statusLabel.isHidden {
             let windowWidth = lightWindow?.frame.width ?? 100
             let font = NSFont.systemFont(ofSize: 11, weight: .medium)
             let textWidth = (marqueeText as NSString).size(withAttributes: [.font: font]).width
@@ -495,12 +576,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     UNUserNotificationCenter.current().add(req) { error in
                         self.log("[通知] UN结果: \(error?.localizedDescription ?? "ok")")
                     }
-                    let notification = NSUserNotification()
-                    notification.title = title
-                    notification.informativeText = body
-                    notification.soundName = NSUserNotificationDefaultSoundName
-                    NSUserNotificationCenter.default.deliver(notification)
-                    self.log("[通知] NSUserNotification 已发送")
                 }
                 let s = STATES[sn] ?? STATES["idle"]!
                 if !blink {
@@ -516,7 +591,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     "fixing": NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 0.8),
                     "error": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 0.8),
                 ]
-                self.statusLabel.textColor = stateColors[sn] ?? NSColor(white: 0.55, alpha: 0.6)
+                self.statusLabel?.textColor = stateColors[sn] ?? NSColor(white: 0.55, alpha: 0.6)
                 // 底部文字：标签 + 消息
                 let displayText: String
                 if sn == "idle" || msg.isEmpty {
@@ -527,9 +602,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     cleanMsg = cleanMsg.trimmingCharacters(in: CharacterSet(charactersIn: ": "))
                     displayText = cleanMsg.isEmpty ? label : "\(label): \(cleanMsg)"
                 }
-                self.statusLabel.stringValue = displayText
-                self.statusLabel.isHidden = !self.config.showStatusText
-                self.statusLabel.toolTip = displayText
+                self.statusLabel?.stringValue = displayText
+                self.statusLabel?.isHidden = !self.config.showStatusText
+                self.statusLabel?.toolTip = displayText
                 self.tooltipView?.toolTip = displayText
                 self.tooltipView?.isHidden = !self.config.showStatusText
                 // 跑马灯：仅文字变化时重置偏移
@@ -565,14 +640,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
-    }
-}
-
-// NSUserNotification 前台也显示
-extension AppDelegate: NSUserNotificationCenterDelegate {
-    func userNotificationCenter(_ center: NSUserNotificationCenter, didActivate notification: NSUserNotification) {}
-    func userNotificationCenter(_ center: NSUserNotificationCenter, shouldPresent notification: NSUserNotification) -> Bool {
-        return true
     }
 }
 
@@ -677,6 +744,17 @@ class RealTrafficLightView: NSView {
     var mascotPhase: CGFloat = 0 { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
+        if bounds.width < 20 {
+            // Edge bar mode: solid color fill
+            if isOn {
+                lampColor.withAlphaComponent(brightness).setFill()
+            } else {
+                lampColor.withAlphaComponent(0.15).setFill()
+            }
+            bounds.fill()
+            return
+        }
+
         let fullR = min(bounds.width, bounds.height) / 2
         let center = NSPoint(x: bounds.midX, y: bounds.midY)
 
