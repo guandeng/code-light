@@ -31,8 +31,6 @@ pip install flask
 python light-server.py
 ```
 
-服务默认运行在 `http://localhost:8866`，可通过环境变量修改端口：
-
 ```bash
 CODELIGHT_PORT=9000 python light-server.py
 ```
