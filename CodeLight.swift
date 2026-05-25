@@ -582,7 +582,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let rightMenu = NSMenu()
-        rightMenu.addItem(withTitle: "设��...", action: #selector(openSettings), keyEquivalent: "")
+        rightMenu.addItem(withTitle: "设置...", action: #selector(openSettings), keyEquivalent: "")
         rightMenu.addItem(NSMenuItem.separator())
         rightMenu.addItem(withTitle: "退出", action: #selector(quitApp), keyEquivalent: "")
         view.menu = rightMenu
@@ -637,11 +637,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleWindow() {
         if lightWindow.isVisible { lightWindow.orderOut(nil) } else { lightWindow.makeKeyAndOrderFront(nil) }
-    }
-    @objc func toggleFloating() {
-        config.isFloating = !config.isFloating; config.save()
-        lightWindow.level = config.isFloating ? (config.showOnFullscreen ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow))) : .floating) : .normal
-        lightWindow.collectionBehavior = (config.isFloating && config.showOnFullscreen) ? [.canJoinAllSpaces, .fullScreenAuxiliary] : []
     }
     @objc func openSettings() {
         if settingsWindowController == nil { settingsWindowController = SettingsWindowController(appDelegate: self) }
@@ -1401,6 +1396,15 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         saveBtn.title = "保存并应用"; saveBtn.bezelStyle = .rounded
         saveBtn.target = self; saveBtn.action = #selector(saveSettings)
         view.addSubview(saveBtn)
+
+        let versionLabel = NSTextField(frame: NSRect(x: 0, y: y - 30, width: 420, height: 20))
+        versionLabel.isEditable = false; versionLabel.isBordered = false; versionLabel.backgroundColor = .clear
+        versionLabel.alignment = .center
+        versionLabel.font = NSFont.systemFont(ofSize: 11)
+        versionLabel.textColor = NSColor.tertiaryLabelColor
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
+        versionLabel.stringValue = "CodeLight v\(ver)"
+        view.addSubview(versionLabel)
     }
 
     func buildRulesTab(_ view: NSView) {
@@ -1478,7 +1482,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // Codex
         codexCheck = NSButton(frame: NSRect(x: 24, y: y, width: 340, height: 24))
         codexCheck.setButtonType(.switch)
-        codexCheck.title = "Codex（~/.codex/config.json）"
+        codexCheck.title = "Codex（~/.codex/config.toml + hooks.json）"
         codexCheck.state = .off
         view.addSubview(codexCheck); y -= 26
         descLabel("配置 Codex 的 sandbox shell hook 事件。", y); y -= 36
@@ -1543,16 +1547,21 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if codexCheck.state == .on {
             let dir = home + "/.codex"
             if !fm.fileExists(atPath: dir) { try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true) }
-            let path = dir + "/config.json"
-            // Codex 使用 shell_command 类型的 hook
+            // 1) config.toml: 启用 hooks
+            let configToml = "[features]\nhooks = true\n"
+            var codexOk = true
+            do { try configToml.write(toFile: dir + "/config.toml", atomically: true, encoding: .utf8) }
+            catch { codexOk = false; appDelegate.log("[Hook] Codex config.toml: \(error)") }
+            // 2) hooks.json: hook 配置（格式与 Claude Code 一致）
+            let hooksPath = dir + "/hooks.json"
             let hooks: [String: Any] = [
                 "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing\", \"session_id\": \"codex\"}'"]]]],
                 "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"codex\"}'"]]]],
                 "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"codex\"}'"]]]],
             ]
-            let ok = writeHooksToFile(path: path, hooks: hooks, fm: fm)
-            results.append(ok ? "✅ Codex" : "❌ Codex")
-            appDelegate.log("[Hook] Codex: \(ok ? "ok" : "failed") \(path)")
+            if !writeHooksToFile(path: hooksPath, hooks: hooks, fm: fm) { codexOk = false }
+            results.append(codexOk ? "✅ Codex" : "❌ Codex")
+            appDelegate.log("[Hook] Codex: \(codexOk ? "ok" : "failed") \(dir)/config.toml + hooks.json")
         }
 
         // --- Cursor ---
