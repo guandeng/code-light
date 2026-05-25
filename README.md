@@ -37,7 +37,11 @@
 
 [**⬇️ 下载最新版**](https://github.com/guandeng/code-light/releases/latest)（macOS 13.0+）
 
-双击 `CodeLight.app` 即可运行。首次打开可能需要在「系统设置 → 隐私与安全性」中允许。
+双击 `CodeLight.app` 即可运行。若提示"已损坏"，在终端执行：
+
+```bash
+xattr -cr CodeLight.app
+```
 
 打开 App 设置，切换到「配置 Hook」选项卡，勾选你要支持的工具（Claude Code / Codex / Cursor），点击「应用配置」即可一键写入。
 
