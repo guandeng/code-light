@@ -1090,11 +1090,35 @@ class RealTrafficLightView: NSView {
     }
 
     func drawMascot(center: NSPoint, size: CGFloat) {
+        // 优先加载外部图片
+        if let img = loadMascotImage(name: mascotType) {
+            let s = size * 2
+            let rect = NSRect(x: center.x - s/2, y: center.y - s/2, width: s, height: s)
+            img.draw(in: rect)
+            return
+        }
+        // 回退到代码绘制
         switch mascotType {
         case "cat": drawCatMascot(center: center, size: size)
         case "robot": drawRobotMascot(center: center, size: size)
         default: drawCowMascot(center: center, size: size)
         }
+    }
+
+    func loadMascotImage(name: String) -> NSImage? {
+        // 1. 用户自定义目录
+        let userPath = NSHomeDirectory() + "/.codelight/mascots/\(name).png"
+        if FileManager.default.fileExists(atPath: userPath) {
+            return NSImage(contentsOfFile: userPath)
+        }
+        // 2. App Resources
+        if let bundlePath = Bundle.main.resourcePath {
+            let appPath = bundlePath + "/mascots/\(name).png"
+            if FileManager.default.fileExists(atPath: appPath) {
+                return NSImage(contentsOfFile: appPath)
+            }
+        }
+        return nil
     }
 
     func drawCowMascot(center: NSPoint, size: CGFloat) {
