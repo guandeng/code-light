@@ -5,4 +5,6 @@ __pycache__/
 .env
 *.log
 CodeLight.app/
+CodeLight 2.app/
+*.zip
 !images/
