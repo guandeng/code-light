@@ -1,5 +1,6 @@
 import Cocoa
 import Foundation
+import Network
 import ServiceManagement
 import UserNotifications
 
@@ -83,6 +84,211 @@ let STATES: [String: LightStateDef] = [
 let SEVERITY = ["error": 4, "working": 3, "fixing": 3, "thinking": 2, "idle": 0]
 
 // ============================================================
+// LightServer — 内置 HTTP 服务（替代 Python Flask）
+// ============================================================
+
+class LightServer {
+    private var listener: NWListener?
+    private let queue = DispatchQueue(label: "codelight.server", qos: .userInteractive)
+    private var sessions: [String: SessionEntry] = [:]
+    private var history: [HistoryEntry] = []
+    private let maxHistory = 100
+    private let sessionTimeout: TimeInterval = 300
+    private let deadTimeout: TimeInterval = 3600
+    var onLog: ((String) -> Void)?
+
+    private struct SessionEntry {
+        var state: String; var message: String; var timestamp: Date
+    }
+    private struct HistoryEntry: Encodable {
+        let timestamp: Double; let state: String; let message: String; let session_id: String; let light: [String: AnyCodable]
+    }
+
+    struct AnyCodable: Encodable {
+        let value: Any
+        init(_ v: Any) { value = v }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            if let v = value as? Bool { try c.encode(v) }
+            else if let v = value as? Int { try c.encode(v) }
+            else if let v = value as? Double { try c.encode(v) }
+            else if let v = value as? String { try c.encode(v) }
+            else { try c.encodeNil() }
+        }
+    }
+
+    func start(port: UInt16) {
+        let params = NWParameters.tcp
+        let opts = NWProtocolTCP.Options()
+        opts.connectionTimeout = 5
+        params.defaultProtocolStack.transportProtocol = opts
+        do {
+            listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        } catch {
+            onLog?("[服务] 监听失败: \(error)")
+            return
+        }
+        listener?.stateUpdateHandler = { state in
+            if case .ready = state { self.onLog?("[服务] HTTP 服务已启动: 端口 \(port)") }
+            else if case .failed(let err) = state { self.onLog?("[服务] 监听失败: \(err)") }
+        }
+        listener?.newConnectionHandler = { conn in conn.start(queue: self.queue); self.handleConnection(conn) }
+        listener?.start(queue: queue)
+    }
+
+    func stop() {
+        listener?.cancel()
+        listener = nil
+    }
+
+    private func handleConnection(_ conn: NWConnection) {
+        var buf = Data()
+        func readMore() {
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isDone, err in
+                if let data = data { buf.append(data) }
+                if let _ = err { conn.cancel(); return }
+                if isDone { conn.cancel(); return }
+                if self.tryParseRequest(buf, conn: conn) { return }
+                readMore()
+            }
+        }
+        readMore()
+    }
+
+    private func tryParseRequest(_ data: Data, conn: NWConnection) -> Bool {
+        guard let headEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return false }
+        let headerStr = String(data: data[data.startIndex..<headEnd.lowerBound], encoding: .utf8) ?? ""
+        let lines = headerStr.components(separatedBy: "\r\n")
+        guard let firstLine = lines.first else { return false }
+        let parts = firstLine.split(separator: " ")
+        guard parts.count >= 2 else { return false }
+        let method = String(parts[0]), path = String(parts[1])
+
+        var contentLength = 0
+        for line in lines {
+            let lower = line.lowercased()
+            if lower.hasPrefix("content-length:") { contentLength = Int(lower.trimmingCharacters(in: .whitespaces).split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) ?? 0 }
+        }
+        let bodyStart = headEnd.upperBound
+        let bodyData = data.count >= bodyStart + contentLength ? data[bodyStart..<bodyStart + contentLength] : nil
+        if data.count < bodyStart + contentLength { return false }
+
+        let body = bodyData.flatMap { String(data: $0, encoding: .utf8) }
+        let response = route(method: method, path: path, body: body)
+        sendResponse(conn: conn, status: response.status, body: response.body)
+        return true
+    }
+
+    private struct RouteResult { let status: Int; let body: String }
+
+    private func route(method: String, path: String, body: String?) -> RouteResult {
+        cleanupStaleSessions()
+        switch "\(method) \(path)" {
+        case "GET /api/state":
+            return .init(status: 200, body: jsonEncode(dictAggregateState()))
+        case "GET /api/sessions":
+            return .init(status: 200, body: jsonEncode(dictSessions()))
+        case "GET /api/history":
+            return .init(status: 200, body: jsonEncodeHistory())
+        case "POST /api/state":
+            return handlePostState(body: body)
+        default:
+            if method == "DELETE", path.hasPrefix("/api/session/") {
+                let sid = String(path.dropFirst("/api/session/".count))
+                return handleDeleteSession(sid)
+            }
+            return .init(status: 404, body: "{\"ok\":false,\"error\":\"not found\"}")
+        }
+    }
+
+    private func handlePostState(body: String?) -> RouteResult {
+        guard let body = body,
+              let raw = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] else {
+            return .init(status: 400, body: "{\"ok\":false,\"error\":\"invalid json\"}")
+        }
+        let state = raw["state"] as? String ?? ""
+        let message = raw["message"] as? String ?? ""
+        var sessionId = raw["session_id"] as? String ?? ""
+        if sessionId.isEmpty { sessionId = "default" }
+        guard STATES[state] != nil else {
+            return .init(status: 400, body: "{\"ok\":false,\"error\":\"invalid state: \(state)\"}")
+        }
+        sessions[sessionId] = SessionEntry(state: state, message: message, timestamp: Date())
+        history.append(HistoryEntry(timestamp: Date().timeIntervalSince1970, state: state, message: message, session_id: String(sessionId.prefix(8)), light: stateLightDict(state)))
+        if history.count > maxHistory { history.removeFirst(history.count - maxHistory) }
+        onLog?("[状态] [\(sessionId.prefix(8))] \(state) — \(message)")
+        return .init(status: 200, body: jsonEncode(dictAggregateState()))
+    }
+
+    private func handleDeleteSession(_ sid: String) -> RouteResult {
+        if sessions.removeValue(forKey: sid) != nil {
+            return .init(status: 200, body: "{\"ok\":true}")
+        }
+        return .init(status: 404, body: "{\"ok\":false,\"error\":\"not found\"}")
+    }
+
+    private func cleanupStaleSessions() {
+        let now = Date()
+        for (sid, s) in sessions where now.timeIntervalSince(s.timestamp) > sessionTimeout && s.state != "idle" {
+            onLog?("[清理] 会话超时: \(sid.prefix(16)) \(s.state) → idle")
+            sessions[sid] = SessionEntry(state: "idle", message: "超时", timestamp: now)
+        }
+        sessions = sessions.filter { now.timeIntervalSince($0.value.timestamp) <= deadTimeout }
+    }
+
+    private func stateLightDict(_ state: String) -> [String: AnyCodable] {
+        guard let def = STATES[state] else { return [:] }
+        return ["red": .init(def.red ? 1 : 0), "yellow": .init(def.yellow ? 1 : 0), "green": .init(def.green ? 1 : 0), "label": .init(def.label), "blink": .init(def.blink)]
+    }
+
+    private func dictAggregateState() -> [String: Any] {
+        if sessions.isEmpty {
+            return ["state": "idle", "timestamp": Date().timeIntervalSince1970, "message": "", "light": stateLightDict("idle").mapValues { $0.value }, "sessions": [:], "active_count": 0] as [String: Any]
+        }
+        let worst = sessions.max { SEVERITY[$0.value.state] ?? 0 < SEVERITY[$1.value.state] ?? 0 }!
+        let active = sessions.values.filter { $0.state != "idle" }.count
+        let msg: String
+        if sessions.count == 1 { msg = worst.value.message }
+        else {
+            var counts: [String: Int] = [:]
+            for s in sessions.values where s.state != "idle" { counts[s.state, default: 0] += 1 }
+            if !counts.isEmpty { msg = "共\(sessions.count)个会话: " + counts.map { "\(STATES[$0.key]?.label ?? $0.key)×\($0.value)" }.joined(separator: ", ") }
+            else { msg = "\(sessions.count)个会话均空闲" }
+        }
+        let sessDict = sessions.mapValues { ["state": $0.state, "message": $0.message, "light": STATES[$0.state]?.label ?? $0.state] } as [String: Any]
+        return ["state": worst.value.state, "timestamp": worst.value.timestamp.timeIntervalSince1970, "message": msg, "light": stateLightDict(worst.value.state).mapValues { $0.value }, "sessions": sessDict, "active_count": active] as [String: Any]
+    }
+
+    private func dictSessions() -> [String: Any] {
+        let now = Date()
+        let sess: [String: Any] = sessions.mapValues { s in
+            ["state": s.state, "message": s.message, "age": "\(Int(now.timeIntervalSince(s.timestamp)))s", "light": STATES[s.state]?.label ?? s.state] as [String: Any]
+        }
+        return ["count": sessions.count, "sessions": sess] as [String: Any]
+    }
+
+    private func jsonEncode(_ dict: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]) else { return "{}" }
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    private func jsonEncodeHistory() -> String {
+        let arr: [[String: Any]] = history.map { h in
+            ["timestamp": h.timestamp, "state": h.state, "message": h.message, "session_id": h.session_id, "light": h.light.mapValues { $0.value }] as [String: Any]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]) else { return "[]" }
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    private func sendResponse(conn: NWConnection, status: Int, body: String) {
+        let statusText = status == 200 ? "OK" : status == 400 ? "Bad Request" : status == 404 ? "Not Found" : "Error"
+        let header = "HTTP/1.1 \(status) \(statusText)\r\nContent-Type: application/json; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\nContent-Length: \(body.utf8.count)\r\n\r\n"
+        let data = Data(header.utf8) + Data(body.utf8)
+        conn.send(content: data, contentContext: .defaultMessage, isComplete: true, completion: .contentProcessed { _ in conn.cancel() })
+    }
+}
+
+// ============================================================
 // AppDelegate
 // ============================================================
 
@@ -118,7 +324,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    var serverProcess: Process?
+    var lightServer: LightServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(config.showInDock ? .regular : .accessory)
@@ -138,55 +344,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func startServer() {
-        let resourceScript = Bundle.main.resourcePath! + "/light-server.py"
-        let devScript = "/Users/guandeng/www/python/code-light/light-server.py"
-        let scriptPath: String
-        if FileManager.default.fileExists(atPath: resourceScript) {
-            scriptPath = resourceScript
-        } else if FileManager.default.fileExists(atPath: devScript) {
-            scriptPath = devScript
-        } else {
-            log("[服务] 未找到 light-server.py")
-            return
-        }
+        let portStr = config.serverURL.components(separatedBy: ":").last ?? "8866"
+        let port = UInt16(portStr) ?? 8866
+        let server = LightServer()
+        server.onLog = { [weak self] msg in DispatchQueue.main.async { self?.log(msg) } }
+        server.start(port: port)
+        lightServer = server
+        checkServerReachability()
+    }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", scriptPath]
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let check = Process()
-            check.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            check.arguments = ["python3", "-c", "import flask"]
-            do {
-                try check.run()
-                check.waitUntilExit()
-                if check.terminationStatus != 0 {
-                    self.log("[服务] 安装 flask...")
-                    let install = Process()
-                    install.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    install.arguments = ["python3", "-m", "pip", "install", "flask", "--break-system-packages", "--quiet"]
-                    try? install.run()
-                    install.waitUntilExit()
-                }
-            } catch { self.log("[服务] 检查 flask 失败: \(error)") }
-
+    func checkServerReachability() {
+        guard let url = URL(string: "\(config.serverURL)/api/state") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 2
+        request.httpMethod = "GET"
+        URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
-                do {
-                    try process.run()
-                    self.serverProcess = process
-                    self.log("[服务] Python 服务已启动: \(scriptPath)")
-                } catch {
-                    self.log("[服务] 启动失败: \(error)")
+                if let http = response as? HTTPURLResponse, http.statusCode == 200, data != nil {
+                    self.log("[检测] 端口连通 ✓")
+                } else {
+                    let msg = error?.localizedDescription ?? "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)"
+                    self.log("[检测] 端口不通: \(msg)")
                 }
             }
-        }
+        }.resume()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        serverProcess?.terminate()
-        log("[退出] Python 服务已停止")
+        lightServer?.stop()
+        log("[退出] 服务已停止")
     }
 
     func buildMenuBar() {
@@ -396,8 +582,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let rightMenu = NSMenu()
-        rightMenu.addItem(withTitle: "切换悬浮", action: #selector(toggleFloating), keyEquivalent: "")
-        rightMenu.addItem(withTitle: "设置...", action: #selector(openSettings), keyEquivalent: "")
+        rightMenu.addItem(withTitle: "设��...", action: #selector(openSettings), keyEquivalent: "")
         rightMenu.addItem(NSMenuItem.separator())
         rightMenu.addItem(withTitle: "退出", action: #selector(quitApp), keyEquivalent: "")
         view.menu = rightMenu
@@ -1006,6 +1191,7 @@ class RealTrafficLightView: NSView {
 class SettingsWindowController: NSWindowController, NSWindowDelegate {
     let appDelegate: AppDelegate
     var serverField: NSTextField!
+    var portTestLabel: NSTextField!
     var pollSlider: NSSlider!; var pollLabel: NSTextField!
     var opacitySlider: NSSlider!; var opacityLabel: NSTextField!
     var blinkSlider: NSSlider!; var blinkLabel: NSTextField!
@@ -1013,6 +1199,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var showDockCheck: NSButton!
     var notifyCheck: NSButton!
     var fullscreenCheck: NSButton!
+    var floatingCheck: NSButton!
     var horizontalCheck: NSButton!
     var showStatusCheck: NSButton!
     var sizeSlider: NSSlider!; var sizeLabel: NSTextField!
@@ -1112,7 +1299,22 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let port = c.serverURL.components(separatedBy: ":").last ?? "8866"
         serverField.stringValue = port; serverField.font = NSFont.systemFont(ofSize: 12)
         serverField.placeholderString = "8866"
-        view.addSubview(serverField); y -= 32
+        view.addSubview(serverField)
+
+        let testBtn = NSButton(frame: NSRect(x: rx + 108, y: y, width: 56, height: 24))
+        testBtn.title = "测试"
+        testBtn.bezelStyle = .rounded
+        testBtn.font = NSFont.systemFont(ofSize: 11)
+        testBtn.target = self
+        testBtn.action = #selector(testPortAction(_:))
+        view.addSubview(testBtn)
+
+        portTestLabel = NSTextField(frame: NSRect(x: rx + 170, y: y + 4, width: 120, height: 16))
+        portTestLabel.isEditable = false; portTestLabel.isBordered = false
+        portTestLabel.backgroundColor = .clear; portTestLabel.font = NSFont.systemFont(ofSize: 11)
+        portTestLabel.stringValue = ""
+        view.addSubview(portTestLabel)
+        y -= 32
 
         label("轮询间隔:", y + 4)
         pollSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
@@ -1188,7 +1390,12 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         fullscreenCheck = NSButton(frame: NSRect(x: lx + 30, y: y, width: 260, height: 24))
         fullscreenCheck.setButtonType(.switch); fullscreenCheck.title = "全屏应用上层显示"
         fullscreenCheck.state = c.showOnFullscreen ? .on : .off
-        view.addSubview(fullscreenCheck); y -= 36
+        view.addSubview(fullscreenCheck); y -= 30
+
+        floatingCheck = NSButton(frame: NSRect(x: lx + 30, y: y, width: 200, height: 24))
+        floatingCheck.setButtonType(.switch); floatingCheck.title = "窗口悬浮置顶"
+        floatingCheck.state = c.isFloating ? .on : .off
+        view.addSubview(floatingCheck); y -= 36
 
         let saveBtn = NSButton(frame: NSRect(x: 110, y: y, width: 120, height: 32))
         saveBtn.title = "保存并应用"; saveBtn.bezelStyle = .rounded
@@ -1411,6 +1618,31 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         sizeLabel.stringValue = "\(Int(sizeSlider.doubleValue))"
     }
 
+    @objc func testPortAction(_ sender: NSButton) {
+        let port = serverField.stringValue.isEmpty ? "8866" : serverField.stringValue
+        let urlStr = "http://127.0.0.1:\(port)/api/state"
+        guard let url = URL(string: urlStr) else {
+            portTestLabel.stringValue = "地址无效"; portTestLabel.textColor = .systemRed
+            return
+        }
+        portTestLabel.stringValue = "检测中..."; portTestLabel.textColor = .secondaryLabelColor
+        sender.isEnabled = false
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                sender.isEnabled = true
+                guard let self = self else { return }
+                if let http = response as? HTTPURLResponse, http.statusCode == 200, data != nil {
+                    self.portTestLabel.stringValue = "连通 ✓"; self.portTestLabel.textColor = .systemGreen
+                } else {
+                    let msg = error?.localizedDescription ?? "无响应"
+                    self.portTestLabel.stringValue = "不通: \(msg)"; self.portTestLabel.textColor = .systemRed
+                }
+            }
+        }.resume()
+    }
+
     @objc func saveSettings() {
         var c = AppConfig()
         c.serverURL = "http://127.0.0.1:" + serverField.stringValue
@@ -1424,7 +1656,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.showOnFullscreen = fullscreenCheck.state == .on
         c.horizontal = horizontalCheck.state == .on
         c.showStatusText = showStatusCheck.state == .on
-        c.isFloating = appDelegate.config.isFloating
+        c.isFloating = floatingCheck.state == .on
         appDelegate.log("[保存] horizontal=\(c.horizontal) windowSize=\(c.windowSize)")
         c.save()
         if c.autoLaunch { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
