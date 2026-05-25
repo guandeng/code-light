@@ -1,4 +1,5 @@
 import Cocoa
+import CoreLocation
 import Foundation
 import Network
 import ServiceManagement
@@ -7,89 +8,6 @@ import UserNotifications
 // ============================================================
 // CodeLight — AI 编程助手红绿灯 macOS App
 // ============================================================
-
-struct AppConfig {
-    var serverURL = "http://127.0.0.1:8866"
-    var pollInterval = 0.5
-    var opacity = 1.0
-    var blinkSpeed = 0.6
-    var autoLaunch = false
-    var showInDock = true
-    var isFloating = true
-    var notifyOnDone = true
-    var showOnFullscreen = true
-    var horizontal = false
-    var showStatusText = true
-    var windowSize: Double = 40
-    var windowX: Double?
-    var windowY: Double?
-    var edgeBar: String?  // "left" | "right" | nil
-    var mascotType: String = "cow"  // "cow" | "cat" | "robot"
-    var theme: String = "dark"     // "dark" | "light" | "custom"
-    var customColor: String = "#1C1E22"
-
-    static func load() -> AppConfig {
-        let ud = UserDefaults.standard
-        var c = AppConfig()
-        if let v = ud.string(forKey: "serverURL") { c.serverURL = v }
-        if ud.double(forKey: "pollInterval") > 0 { c.pollInterval = ud.double(forKey: "pollInterval") }
-        if ud.double(forKey: "opacity") > 0 { c.opacity = ud.double(forKey: "opacity") }
-        if ud.double(forKey: "blinkSpeed") > 0 { c.blinkSpeed = ud.double(forKey: "blinkSpeed") }
-        if let v = ud.string(forKey: "theme") { c.theme = v }
-        c.autoLaunch = ud.bool(forKey: "autoLaunch")
-        c.showInDock = ud.bool(forKey: "showInDock")
-        if ud.object(forKey: "isFloating") != nil { c.isFloating = ud.bool(forKey: "isFloating") }
-        if ud.object(forKey: "notifyOnDone") != nil { c.notifyOnDone = ud.bool(forKey: "notifyOnDone") }
-        if ud.object(forKey: "showOnFullscreen") != nil { c.showOnFullscreen = ud.bool(forKey: "showOnFullscreen") }
-        if ud.object(forKey: "horizontal") != nil { c.horizontal = ud.bool(forKey: "horizontal") }
-        if ud.object(forKey: "showStatusText") != nil { c.showStatusText = ud.bool(forKey: "showStatusText") }
-        if ud.double(forKey: "windowSize") > 0 { c.windowSize = ud.double(forKey: "windowSize") }
-        if ud.object(forKey: "windowX") != nil { c.windowX = ud.double(forKey: "windowX") }
-        if ud.object(forKey: "windowY") != nil { c.windowY = ud.double(forKey: "windowY") }
-        if let v = ud.string(forKey: "edgeBar") { c.edgeBar = v }
-        if let v = ud.string(forKey: "mascotType") { c.mascotType = v }
-        if let v = ud.string(forKey: "theme") { c.theme = v }
-        if let v = ud.string(forKey: "customColor") { c.customColor = v }
-        return c
-    }
-
-    func save() {
-        let ud = UserDefaults.standard
-        ud.set(serverURL, forKey: "serverURL")
-        ud.set(pollInterval, forKey: "pollInterval")
-        ud.set(opacity, forKey: "opacity")
-        ud.set(blinkSpeed, forKey: "blinkSpeed")
-        ud.set(theme, forKey: "theme")
-        ud.set(autoLaunch, forKey: "autoLaunch")
-        ud.set(showInDock, forKey: "showInDock")
-        ud.set(isFloating, forKey: "isFloating")
-        ud.set(notifyOnDone, forKey: "notifyOnDone")
-        ud.set(showOnFullscreen, forKey: "showOnFullscreen")
-        ud.set(horizontal, forKey: "horizontal")
-        ud.set(showStatusText, forKey: "showStatusText")
-        ud.set(windowSize, forKey: "windowSize")
-        if let x = windowX { ud.set(x, forKey: "windowX") }
-        if let y = windowY { ud.set(y, forKey: "windowY") }
-        if let v = edgeBar { ud.set(v, forKey: "edgeBar") } else { ud.removeObject(forKey: "edgeBar") }
-        ud.set(mascotType, forKey: "mascotType")
-        ud.set(theme, forKey: "theme")
-        ud.set(customColor, forKey: "customColor")
-    }
-}
-
-struct LightStateDef {
-    let red: Bool; let yellow: Bool; let green: Bool; let blink: Bool; let label: String
-}
-
-let STATES: [String: LightStateDef] = [
-    "idle":     LightStateDef(red: false, yellow: false, green: true,  blink: false, label: "空闲中"),
-    "thinking": LightStateDef(red: false, yellow: true,  green: false, blink: false, label: "思考中"),
-    "working":  LightStateDef(red: true,  yellow: false, green: false, blink: true,  label: "执行中"),
-    "fixing":   LightStateDef(red: false, yellow: true,  green: false, blink: true,  label: "修复中"),
-    "error":    LightStateDef(red: true,  yellow: false, green: false, blink: false, label: "警告中"),
-]
-
-let SEVERITY = ["error": 4, "working": 3, "fixing": 3, "thinking": 2, "idle": 0]
 
 // ============================================================
 // LightServer — 内置 HTTP 服务（替代 Python Flask）
@@ -323,6 +241,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var sessions: [String: [String: Any]] = [:]
     var shellView: ShellView?
     var trafficContainer: TrafficLightContainer?
+    var weatherView: WeatherView?
 
     func log(_ msg: String) {
         let path = "/tmp/codelight.log"
@@ -361,6 +280,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         startTimers()
         pollState()
+        if config.weatherThemeEnabled {
+            WeatherManager.shared.onWeatherUpdate = { [weak self] condition, temp in
+                self?.weatherView?.condition = condition
+                self?.weatherView?.weatherCode = WeatherManager.shared.weatherCode
+                self?.log("[天气] \(condition.displayName(code: WeatherManager.shared.weatherCode)) \(Int(temp))°C")
+            }
+            WeatherManager.shared.startPolling()
+        }
         log("[启动] OK")
     }
 
@@ -431,10 +358,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 国标色值
         let red = NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)
-        let yellow = NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 1.0)
+        let yellow = NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0)
         let green = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
         let dimRed = NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 0.25)
-        let dimYellow = NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 0.25)
+        let dimYellow = NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 0.25)
         let dimGreen = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 0.25)
 
         let redOn = state == "working" || state == "error"
@@ -486,11 +413,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         defer { isRebuilding = false }
         let initSize = CGFloat(config.windowSize)
         let isEdgeBar = config.edgeBar != nil
+        let isMini = config.displayMode == "mini"
         let lightW: CGFloat, lightH: CGFloat
         let statusH: CGFloat = config.showStatusText ? 26 : 0
         if isEdgeBar {
             lightW = 10
             lightH = initSize * 3 + 14 * 2 - 28
+        } else if isMini {
+            lightW = initSize + 4
+            lightH = initSize + 4
         } else if config.horizontal {
             lightW = initSize * 3 + 14 * 2 + 18 * 2
             lightH = initSize + 40 + statusH
@@ -546,7 +477,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             bgColor = NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: config.opacity)
         }
         view.layer?.backgroundColor = bgColor.cgColor
-        view.layer?.cornerRadius = isEdgeBar ? 3 : min(lightW, lightH) / 2
+        view.layer?.cornerRadius = isEdgeBar ? 3 : (isMini ? lightW / 2 : min(lightW, lightH) / 2)
         view.layer?.masksToBounds = true
 
         if isEdgeBar {
@@ -556,7 +487,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             redView.lampColor = NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)
             redView.frame = NSRect(x: 0, y: segH * 2, width: lightW, height: segH)
             yellowView = RealTrafficLightView()
-            yellowView.lampColor = NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 1.0)
+            yellowView.lampColor = NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0)
             yellowView.frame = NSRect(x: 0, y: segH, width: lightW, height: segH)
             greenView = RealTrafficLightView()
             greenView.lampColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
@@ -564,6 +495,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             view.addSubview(redView)
             view.addSubview(yellowView)
             view.addSubview(greenView)
+        } else if isMini {
+            // Mini 模式：单圆形，颜色随状态变化
+            redView = RealTrafficLightView()
+            redView.lampColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
+            redView.frame = view.bounds
+            view.addSubview(redView)
+            yellowView = RealTrafficLightView(); yellowView.frame = NSRect.zero
+            greenView = RealTrafficLightView(); greenView.frame = NSRect.zero
+            shellView = nil; trafficContainer = nil
         } else {
             let shell = ShellView(frame: view.bounds)
             shell.theme = config.theme
@@ -571,6 +511,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             shell.autoresizingMask = [.width, .height]
             view.addSubview(shell)
             shellView = shell
+
+            if config.weatherThemeEnabled {
+                let wv = WeatherView(frame: view.bounds)
+                wv.autoresizingMask = [.width, .height]
+                wv.condition = WeatherManager.shared.currentCondition
+                wv.weatherCode = WeatherManager.shared.weatherCode
+                view.addSubview(wv, positioned: .above, relativeTo: shell)
+                weatherView = wv
+            } else {
+                weatherView = nil
+            }
 
             let container = TrafficLightContainer(frame: view.bounds)
             container.isHorizontal = config.horizontal
@@ -584,7 +535,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             redView.lampColor = NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)
 
             yellowView = RealTrafficLightView()
-            yellowView.lampColor = NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 1.0)
+            yellowView.lampColor = NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0)
 
             greenView = RealTrafficLightView()
             greenView.lampColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
@@ -599,7 +550,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             container.layout()
         }
 
-        if !isEdgeBar {
+        if !isEdgeBar && !isMini {
             statusLabel = NSTextField(frame: NSRect(x: 0, y: 6, width: view.bounds.width, height: 18))
             statusLabel.isEditable = false; statusLabel.isBordered = false
             statusLabel.backgroundColor = .clear
@@ -616,6 +567,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             tooltipArea.isHidden = !config.showStatusText
             view.addSubview(tooltipArea)
             self.tooltipView = tooltipArea
+        } else {
+            statusLabel = nil
+            tooltipView = nil
         }
 
         let rightMenu = NSMenu()
@@ -718,11 +672,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func quitApp() { NSApp.terminate(nil) }
 
+    /// 从磁盘重新加载配置并重建窗口（保存后调用）
     func restartWithNewConfig() {
+        let oldHorizontal = config.horizontal
         config = AppConfig.load()
-        log("[重启] horizontal=\(config.horizontal)")
+        rebuildWindow(from: oldHorizontal)
+    }
+
+    /// 用内存中当前 config 直接重建窗口（实时预览用，不读磁盘）
+    func rebuildWithCurrentConfig() {
+        let oldHorizontal = config.horizontal
+        rebuildWindow(from: oldHorizontal)
+    }
+
+    private func rebuildWindow(from oldHorizontal: Bool) {
+        let oldMode = ["vertical": 0, "horizontal": 1, "mini": 2][oldHorizontal ? "horizontal" : "vertical"] ?? 0
+        let newMode = ["vertical": 0, "horizontal": 1, "mini": 2][config.displayMode] ?? 0
         NSApp.setActivationPolicy(.regular)
-        buildLightWindow(); startTimers(); pollState()
+
+        if config.weatherThemeEnabled {
+            WeatherManager.shared.onWeatherUpdate = { [weak self] condition, temp in
+                self?.weatherView?.condition = condition
+                self?.weatherView?.weatherCode = WeatherManager.shared.weatherCode
+            }
+            WeatherManager.shared.startPolling()
+        } else {
+            WeatherManager.shared.stopPolling()
+        }
+
+        if oldMode != newMode, let view = lightWindow.contentView {
+            let transition = CATransition()
+            transition.type = CATransitionType(rawValue: "flip")
+            transition.subtype = newMode > oldMode ? .fromRight : .fromLeft
+            transition.duration = 0.45
+            transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            view.layer?.add(transition, forKey: "orientFlip")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                self.buildLightWindow(); self.startTimers(); self.pollState()
+            }
+        } else {
+            buildLightWindow(); startTimers(); pollState()
+        }
     }
 
     func animateLight() {
@@ -730,45 +720,91 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         animPhase += 0.04
         if animPhase > 1 { animPhase -= 1 }
 
-        // 所有灯更新 mascot
-        redView.mascotPhase = animPhase
-        yellowView.mascotPhase = animPhase
-        greenView.mascotPhase = animPhase
+        // 只有非 idle 状态才高频更新（闪烁/呼吸/吉祥物动画）
+        // idle 状态每 25 帧（~1.25s）更新一次吉祥物即可
+        let needsAnim = state != "idle" || Int(animPhase * 100) % 25 == 0
+        if needsAnim {
+            redView.mascotPhase = animPhase
+            yellowView.mascotPhase = animPhase
+            greenView.mascotPhase = animPhase
+        }
+        redView.tickMascotFade()
+        yellowView.tickMascotFade()
+        greenView.tickMascotFade()
 
-        switch state {
-        case "thinking":
-            let breath = CGFloat(0.3 + 0.7 * (0.5 + 0.5 * sin(Double(animPhase) * .pi * 2)))
-            yellowView.isOn = true; yellowView.brightness = breath
-            yellowView.mascotState = "thinking"
-            redView.isOn = false; redView.mascotState = ""
-            greenView.isOn = false; greenView.mascotState = ""
+        // Mini 模式：单灯颜色随状态切换
+        if config.displayMode == "mini" {
+            let miniColors: [String: NSColor] = [
+                "idle": NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0),
+                "thinking": NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0),
+                "working": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0),
+                "fixing": NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0),
+                "error": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0),
+            ]
+            redView.lampColor = miniColors[state] ?? miniColors["idle"]!
+            redView.isOn = true
+            switch state {
+            case "thinking":
+                redView.brightness = CGFloat(0.3 + 0.7 * (0.5 + 0.5 * sin(Double(animPhase) * .pi * 2)))
+            case "working":
+                redView.brightness = sin(Double(animPhase) * .pi * 2) > 0 ? 1.0 : 0.15
+            case "fixing":
+                redView.brightness = CGFloat(0.3 + 0.7 * (0.5 + 0.5 * sin(Double(animPhase) * .pi * 3)))
+            case "error":
+                redView.brightness = sin(Double(animPhase) * .pi * 4) > 0 ? 1.0 : 0.15
+            default:
+                redView.brightness = 1.0
+            }
+        } else {
+            switch state {
+            case "thinking":
+                let breath = CGFloat(0.3 + 0.7 * (0.5 + 0.5 * sin(Double(animPhase) * .pi * 2)))
+                yellowView.isOn = true; yellowView.brightness = breath
+                yellowView.mascotState = "thinking"
+                redView.isOn = false; redView.mascotState = ""
+                greenView.isOn = false; greenView.mascotState = ""
 
-        case "working":
-            let slow = sin(Double(animPhase) * .pi * 2) > 0
-            redView.isOn = slow; redView.brightness = 1.0
-            redView.mascotState = "working"
-            yellowView.isOn = false; yellowView.mascotState = ""
-            greenView.isOn = false; greenView.mascotState = ""
+            case "working":
+                let slow = sin(Double(animPhase) * .pi * 2) > 0
+                redView.isOn = slow; redView.brightness = 1.0
+                redView.mascotState = "working"
+                yellowView.isOn = false; yellowView.mascotState = ""
+                greenView.isOn = false; greenView.mascotState = ""
 
-        case "fixing":
-            let slow = CGFloat(0.3 + 0.7 * (0.5 + 0.5 * sin(Double(animPhase) * .pi * 3)))
-            yellowView.isOn = true; yellowView.brightness = slow
-            yellowView.mascotState = "fixing"
-            redView.isOn = false; redView.mascotState = ""
-            greenView.isOn = false; greenView.mascotState = ""
+            case "fixing":
+                let slow = CGFloat(0.3 + 0.7 * (0.5 + 0.5 * sin(Double(animPhase) * .pi * 3)))
+                yellowView.isOn = true; yellowView.brightness = slow
+                yellowView.mascotState = "fixing"
+                redView.isOn = false; redView.mascotState = ""
+                greenView.isOn = false; greenView.mascotState = ""
 
-        case "error":
-            let fast = sin(Double(animPhase) * .pi * 4) > 0
-            redView.isOn = fast; redView.brightness = 1.0
-            redView.mascotState = "error"
-            yellowView.isOn = false; yellowView.mascotState = ""
-            greenView.isOn = false; greenView.mascotState = ""
+            case "error":
+                let fast = sin(Double(animPhase) * .pi * 4) > 0
+                redView.isOn = fast; redView.brightness = 1.0
+                redView.mascotState = "error"
+                yellowView.isOn = false; yellowView.mascotState = ""
+                greenView.isOn = false; greenView.mascotState = ""
 
-        default: // idle
-            greenView.isOn = true; greenView.brightness = 1.0
-            greenView.mascotState = "idle"
-            redView.isOn = false; redView.mascotState = ""
-            yellowView.isOn = false; yellowView.mascotState = ""
+            default: // idle
+                greenView.isOn = true; greenView.brightness = 1.0
+                greenView.mascotState = "idle"
+                redView.isOn = false; redView.mascotState = ""
+                yellowView.isOn = false; yellowView.mascotState = ""
+            }
+        }
+
+        // 外框/边框颜色跟随当前状态
+        let stateColors: [String: NSColor] = [
+            "idle": NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0),
+            "thinking": NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0),
+            "working": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0),
+            "fixing": NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0),
+            "error": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0),
+        ]
+        let activeColor = stateColors[state] ?? stateColors["idle"]!
+        if config.displayMode == "mini" {
+            lightWindow.contentView?.layer?.borderColor = activeColor.withAlphaComponent(0.5).cgColor
+            lightWindow.contentView?.layer?.borderWidth = 2.5
         }
 
         // 跑马灯：文字超过可见宽度时滚动（文字隐藏时跳过）
@@ -839,9 +875,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // 底部文字颜色跟随灯色
                 let stateColors: [String: NSColor] = [
                     "idle": NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 0.8),
-                    "thinking": NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 0.8),
+                    "thinking": NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 0.8),
                     "working": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 0.8),
-                    "fixing": NSColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 0.8),
+                    "fixing": NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 0.8),
                     "error": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 0.8),
                 ]
                 self.statusLabel?.textColor = stateColors[sn] ?? NSColor(white: 0.55, alpha: 0.6)
@@ -881,6 +917,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 // ============================================================
+// WeatherManager — Open-Meteo 天气数据获取
+// ============================================================
+
+
+// ============================================================
+// WeatherView — 天气动画背景层
+// ============================================================
+
+
+// ============================================================
 // TrafficLightContainer — 自适应灯容器，resize 时自动调整灯的大小和位置
 // ============================================================
 // AppDelegate + UNUserNotificationCenterDelegate
@@ -894,534 +940,11 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
 
 // ============================================================
 
-class TrafficLightContainer: NSView {
-    var redView: RealTrafficLightView!
-    var yellowView: RealTrafficLightView!
-    var greenView: RealTrafficLightView!
-    var isHorizontal = false
-    var showStatusText = true
-    var mascotType: String = "cow" {
-        didSet { redView?.mascotType = mascotType; yellowView?.mascotType = mascotType; greenView?.mascotType = mascotType }
-    }
-
-    override func layout() {
-        super.layout()
-        let w = bounds.width
-        let h = bounds.height
-        guard w > 0, h > 0 else { return }
-
-        if isHorizontal {
-            layoutHorizontal(w: w, h: h)
-        } else {
-            layoutVertical(w: w, h: h)
-        }
-    }
-
-    private func layoutVertical(w: CGFloat, h: CGFloat) {
-        let bottomBar: CGFloat = showStatusText ? 26 : 0
-        let padding: CGFloat = min(w * 0.12, 18)
-        let gap: CGFloat = min(w * 0.08, 14)
-        let availH = h - bottomBar - padding * 2
-        let availW = w - padding * 2
-
-        let maxDiam = min(availW, (availH - gap * 2) / 3)
-        let diam = max(maxDiam, 20)
-
-        let cx = w / 2
-        let gy = bottomBar + padding
-        let yy = gy + diam + gap
-        let ry = yy + diam + gap
-
-        greenView.frame = NSRect(x: cx - diam/2, y: gy, width: diam, height: diam)
-        yellowView.frame = NSRect(x: cx - diam/2, y: yy, width: diam, height: diam)
-        redView.frame = NSRect(x: cx - diam/2, y: ry, width: diam, height: diam)
-    }
-
-    private func layoutHorizontal(w: CGFloat, h: CGFloat) {
-        let bottomBar: CGFloat = showStatusText ? 26 : 0
-        let padding: CGFloat = min(h * 0.12, 18)
-        let gap: CGFloat = min(h * 0.08, 14)
-        let availH = h - bottomBar - padding * 2
-        let availW = w - padding * 2
-
-        let maxDiam = min(availH, (availW - gap * 2) / 3)
-        let diam = max(maxDiam, 20)
-
-        let cy = bottomBar + (h - bottomBar) / 2
-        let rx = padding
-        let yx = rx + diam + gap
-        let gx = yx + diam + gap
-
-        redView.frame = NSRect(x: rx, y: cy - diam/2, width: diam, height: diam)
-        yellowView.frame = NSRect(x: yx, y: cy - diam/2, width: diam, height: diam)
-        greenView.frame = NSRect(x: gx, y: cy - diam/2, width: diam, height: diam)
-    }
-}
-
-// ============================================================
-// ShellView — 金属拉丝外壳
-// ============================================================
-
-class ShellView: NSView {
-    var theme: String = "dark" { didSet { needsDisplay = true } }
-    var customColor: NSColor = NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0) { didSet { needsDisplay = true } }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds
-        let r = min(rect.width, rect.height) / 2
-
-        let grad: NSGradient
-        let borderColor: NSColor
-        switch theme {
-        case "light":
-            grad = NSGradient(colors: [
-                NSColor(white: 0.85, alpha: 1.0),
-                NSColor(white: 0.72, alpha: 1.0),
-                NSColor(white: 0.80, alpha: 1.0),
-            ])!
-            borderColor = NSColor(white: 0.6, alpha: 0.4)
-        case "custom":
-            let c = customColor
-            let lighter = c.highlight(withLevel: 0.15) ?? c
-            let darker = c.shadow(withLevel: 0.15) ?? c
-            grad = NSGradient(colors: [lighter, darker, c])!
-            borderColor = NSColor(white: 0.4, alpha: 0.3)
-        default: // dark
-            grad = NSGradient(colors: [
-                NSColor(white: 0.18, alpha: 1.0),
-                NSColor(white: 0.10, alpha: 1.0),
-                NSColor(white: 0.14, alpha: 1.0),
-            ])!
-            borderColor = NSColor(white: 0.25, alpha: 0.3)
-        }
-
-        let path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r)
-        grad.draw(in: path, angle: 90)
-
-        let inner = rect.insetBy(dx: 1.5, dy: 1.5)
-        let innerPath = NSBezierPath(roundedRect: inner, xRadius: r - 1.5, yRadius: r - 1.5)
-        borderColor.setStroke()
-        innerPath.lineWidth = 1
-        innerPath.stroke()
-    }
-}
 
 // ============================================================
 // RealTrafficLightView — 仿真灯珠
 // ============================================================
 
-class RealTrafficLightView: NSView {
-    var lampColor: NSColor = .red
-    var isOn: Bool = false { didSet { needsDisplay = true } }
-    var brightness: CGFloat = 1.0 { didSet { needsDisplay = true } }
-    var mascotState: String = "idle" { didSet { needsDisplay = true } }
-    var mascotPhase: CGFloat = 0 { didSet { needsDisplay = true } }
-    var mascotType: String = "cow" { didSet { needsDisplay = true } }
-
-    override func draw(_ dirtyRect: NSRect) {
-        if bounds.width < 20 {
-            // Edge bar mode: solid color fill
-            if isOn {
-                lampColor.withAlphaComponent(brightness).setFill()
-            } else {
-                lampColor.withAlphaComponent(0.15).setFill()
-            }
-            bounds.fill()
-            return
-        }
-
-        let fullR = min(bounds.width, bounds.height) / 2
-        let center = NSPoint(x: bounds.midX, y: bounds.midY)
-
-        // 灯孔 — 小凹槽
-        let holePath = NSBezierPath()
-        holePath.appendArc(withCenter: center, radius: fullR - 1, startAngle: 0, endAngle: 360)
-        NSColor(white: 0.06, alpha: 1.0).setFill()
-        holePath.fill()
-
-        // 灯珠底色
-        let lampR = fullR - 3
-        let lampPath = NSBezierPath()
-        lampPath.appendArc(withCenter: center, radius: lampR, startAngle: 0, endAngle: 360)
-        if isOn {
-            lampColor.withAlphaComponent(brightness * 0.15).setFill()
-        } else {
-            NSColor(white: 0.08, alpha: 1.0).setFill()
-        }
-        lampPath.fill()
-
-        // LED 点阵 — 六角密排小圆点
-        let dotR: CGFloat = max(lampR / 16, 1.0)
-        let spacing = dotR * 2.8
-        let rows = Int((lampR + spacing) / (spacing * 0.866)) + 1
-        let onColor = lampColor.withAlphaComponent(brightness)
-        let offColor = NSColor(white: 0.12, alpha: 1.0)
-
-        // 先裁切到灯珠圆形区域
-        let clipPath = NSBezierPath()
-        clipPath.appendArc(withCenter: center, radius: lampR, startAngle: 0, endAngle: 360)
-        clipPath.addClip()
-
-        for row in -rows...rows {
-            let yOffset = CGFloat(row) * spacing * 0.866
-            let offset = (row % 2 != 0) ? spacing * 0.5 : 0
-            let maxDx = sqrt(max(0, Double(lampR * lampR - yOffset * yOffset)))
-            let cols = Int((maxDx + spacing) / spacing)
-            for col in -cols...cols {
-                let dx = CGFloat(col) * spacing + offset
-                let dy = yOffset
-                let dist = sqrt(dx * dx + dy * dy)
-                if dist > lampR + dotR { continue }
-                let dotPath = NSBezierPath()
-                dotPath.appendArc(withCenter: NSPoint(x: center.x + dx, y: center.y + dy), radius: dotR, startAngle: 0, endAngle: 360)
-                if isOn {
-                    onColor.setFill()
-                } else {
-                    offColor.setFill()
-                }
-                dotPath.fill()
-            }
-        }
-
-        // 吉祥物 — 灯亮时在灯珠上画小牛马
-        if isOn && lampR > 12 {
-            drawMascot(center: center, size: lampR * 1.4)
-        }
-    }
-
-    func drawMascot(center: NSPoint, size: CGFloat) {
-        // 优先加载外部图片
-        if let img = loadMascotImage(name: mascotType) {
-            let s = size * 2
-            let rect = NSRect(x: center.x - s/2, y: center.y - s/2, width: s, height: s)
-            img.draw(in: rect)
-            return
-        }
-        // 回退到代码绘制
-        switch mascotType {
-        case "cat": drawCatMascot(center: center, size: size)
-        case "robot": drawRobotMascot(center: center, size: size)
-        default: drawCowMascot(center: center, size: size)
-        }
-    }
-
-    func loadMascotImage(name: String) -> NSImage? {
-        // 1. 用户自定义目录
-        let userPath = NSHomeDirectory() + "/.codelight/mascots/\(name).png"
-        if FileManager.default.fileExists(atPath: userPath) {
-            return NSImage(contentsOfFile: userPath)
-        }
-        // 2. App Resources
-        if let bundlePath = Bundle.main.resourcePath {
-            let appPath = bundlePath + "/mascots/\(name).png"
-            if FileManager.default.fileExists(atPath: appPath) {
-                return NSImage(contentsOfFile: appPath)
-            }
-        }
-        return nil
-    }
-
-    func drawCowMascot(center: NSPoint, size: CGFloat) {
-        let cx = center.x
-        let cy = center.y
-        let s = size
-        let cowBody = NSColor(white: 1.0, alpha: 0.9)
-        let cowSpot = NSColor(red: 0.35, green: 0.25, blue: 0.15, alpha: 0.7)
-        let eyeColor = NSColor(white: 0.1, alpha: 0.9)
-        let noseColor = NSColor(red: 1.0, green: 0.65, blue: 0.7, alpha: 0.9)
-        let hornColor = NSColor(red: 0.95, green: 0.9, blue: 0.7, alpha: 0.9)
-
-        // 画牛头（所有状态共用）
-        func drawHead(hx: CGFloat, hy: CGFloat, faceUp: Bool = true) {
-            // 头
-            let headR = s * 0.22
-            let head = NSBezierPath()
-            head.appendArc(withCenter: NSPoint(x: hx, y: hy), radius: headR, startAngle: 0, endAngle: 360)
-            cowBody.setFill(); head.fill()
-            // 角（两个小三角）
-            hornColor.setFill()
-            let hLen = s * 0.1
-            for dx: CGFloat in [-s*0.1, s*0.1] {
-                let hornPath = NSBezierPath()
-                if faceUp {
-                    hornPath.move(to: NSPoint(x: hx + dx - s*0.03, y: hy + headR - s*0.02))
-                    hornPath.line(to: NSPoint(x: hx + dx, y: hy + headR + hLen))
-                    hornPath.line(to: NSPoint(x: hx + dx + s*0.03, y: hy + headR - s*0.02))
-                } else {
-                    hornPath.move(to: NSPoint(x: hx + dx - s*0.03, y: hy - headR + s*0.02))
-                    hornPath.line(to: NSPoint(x: hx + dx, y: hy - headR - hLen))
-                    hornPath.line(to: NSPoint(x: hx + dx + s*0.03, y: hy - headR + s*0.02))
-                }
-                hornPath.fill()
-            }
-            // 花斑
-            cowSpot.setFill()
-            let spot = NSBezierPath()
-            spot.appendArc(withCenter: NSPoint(x: hx + s*0.06, y: hy - s*0.02), radius: s*0.07, startAngle: 0, endAngle: 360)
-            spot.fill()
-        }
-
-        // 画眼睛
-        func drawEyes(ex: CGFloat, ey: CGFloat, closed: Bool = false, lookUp: Bool = false) {
-            if closed {
-                // 闭眼 — 弧线
-                NSColor(white: 0.2, alpha: 0.7).setStroke()
-                let line = NSBezierPath()
-                line.move(to: NSPoint(x: ex - s*0.06, y: ey))
-                line.line(to: NSPoint(x: ex + s*0.06, y: ey))
-                line.lineWidth = 1.5; line.stroke()
-            } else {
-                eyeColor.setFill()
-                let eyeOff: CGFloat = lookUp ? s*0.02 : 0
-                NSBezierPath(ovalIn: NSRect(x: ex - s*0.07, y: ey - s*0.03 + eyeOff, width: s*0.05, height: s*0.06)).fill()
-                NSBezierPath(ovalIn: NSRect(x: ex + s*0.03, y: ey - s*0.03 + eyeOff, width: s*0.05, height: s*0.06)).fill()
-                // 高光
-                NSColor.white.withAlphaComponent(0.8).setFill()
-                NSBezierPath(ovalIn: NSRect(x: ex - s*0.05, y: ey + eyeOff, width: s*0.02, height: s*0.02)).fill()
-                NSBezierPath(ovalIn: NSRect(x: ex + s*0.05, y: ey + eyeOff, width: s*0.02, height: s*0.02)).fill()
-            }
-        }
-
-        // 画鼻子
-        func drawNose(nx: CGFloat, ny: CGFloat, faceUp: Bool = true) {
-            noseColor.setFill()
-            let nR = s * 0.06
-            let nPath = NSBezierPath(roundedRect: NSRect(x: nx - nR, y: ny - nR*0.6, width: nR*2, height: nR*1.2), xRadius: nR*0.4, yRadius: nR*0.4)
-            nPath.fill()
-            // 鼻孔
-            NSColor(red: 0.85, green: 0.5, blue: 0.55, alpha: 0.8).setFill()
-            let holeR = s * 0.015
-            NSBezierPath(ovalIn: NSRect(x: nx - nR*0.5, y: ny - holeR, width: holeR*2, height: holeR*2)).fill()
-            NSBezierPath(ovalIn: NSRect(x: nx + nR*0.2, y: ny - holeR, width: holeR*2, height: holeR*2)).fill()
-        }
-
-        // 画身体+四条腿
-        func drawBody(bx: CGFloat, by: CGFloat, legAnim: CGFloat = 0, lying: Bool = false) {
-            if lying {
-                // 躺平 — 扁椭圆
-                cowBody.setFill()
-                let body = NSBezierPath(ovalIn: NSRect(x: bx - s*0.28, y: by - s*0.12, width: s*0.56, height: s*0.24))
-                body.fill()
-                cowSpot.setFill()
-                NSBezierPath(ovalIn: NSRect(x: bx - s*0.1, y: by - s*0.05, width: s*0.15, height: s*0.1)).fill()
-            } else {
-                // 站立 — 圆润身体
-                cowBody.setFill()
-                let body = NSBezierPath(ovalIn: NSRect(x: bx - s*0.2, y: by - s*0.25, width: s*0.4, height: s*0.45))
-                body.fill()
-                cowSpot.setFill()
-                NSBezierPath(ovalIn: NSRect(x: bx + s*0.02, y: by - s*0.1, width: s*0.12, height: s*0.15)).fill()
-                // 四条腿
-                cowBody.setFill()
-                let legW = s * 0.06
-                let legH = s * 0.15
-                NSBezierPath(roundedRect: NSRect(x: bx - s*0.15, y: by - s*0.28 - legH + legAnim, width: legW, height: legH), xRadius: legW*0.3, yRadius: legW*0.3).fill()
-                NSBezierPath(roundedRect: NSRect(x: bx - s*0.05, y: by - s*0.28 - legH - legAnim, width: legW, height: legH), xRadius: legW*0.3, yRadius: legW*0.3).fill()
-                NSBezierPath(roundedRect: NSRect(x: bx + s*0.05, y: by - s*0.28 - legH + legAnim, width: legW, height: legH), xRadius: legW*0.3, yRadius: legW*0.3).fill()
-                NSBezierPath(roundedRect: NSRect(x: bx + s*0.13, y: by - s*0.28 - legH - legAnim, width: legW, height: legH), xRadius: legW*0.3, yRadius: legW*0.3).fill()
-            }
-        }
-
-        // 尾巴
-        func drawTail(tx: CGFloat, ty: CGFloat, wag: CGFloat) {
-            NSColor(white: 0.7, alpha: 0.6).setStroke()
-            let tail = NSBezierPath()
-            tail.move(to: NSPoint(x: tx - s*0.2, y: ty))
-            let cpx = tx - s*0.3 + wag * s * 0.05
-            tail.curve(to: NSPoint(x: tx - s*0.25, y: ty + s*0.12), controlPoint1: NSPoint(x: cpx, y: ty + s*0.05), controlPoint2: NSPoint(x: cpx, y: ty + s*0.1))
-            tail.lineWidth = 1.5; tail.stroke()
-            // 尾巴尖
-            cowSpot.setFill()
-            NSBezierPath(ovalIn: NSRect(x: tx - s*0.28, y: ty + s*0.1, width: s*0.05, height: s*0.05)).fill()
-        }
-
-        switch mascotState {
-        case "working":
-            // 🐂 小牛耕地 — 低头用力走
-            let legAnim = sin(Double(mascotPhase) * .pi * 6) * s * 0.04
-            let sway = sin(Double(mascotPhase) * .pi * 6) * s * 0.03
-            let bx = cx + sway
-            drawBody(bx: bx, by: cy - s*0.05, legAnim: CGFloat(legAnim))
-            drawHead(hx: bx - s*0.05, hy: cy + s*0.25)
-            drawEyes(ex: bx - s*0.05, ey: cy + s*0.22)  // 朝前看
-            drawNose(nx: bx - s*0.05, ny: cy + s*0.15)
-            drawTail(tx: bx, ty: cy + s*0.05, wag: CGFloat(sin(Double(mascotPhase) * .pi * 4)))
-            // 头上汗滴
-            let sweatAlpha = CGFloat(0.3 + 0.4 * sin(Double(mascotPhase) * .pi * 3))
-            NSColor(red: 0.5, green: 0.8, blue: 1.0, alpha: sweatAlpha).setFill()
-            NSBezierPath(ovalIn: NSRect(x: bx + s*0.1, y: cy + s*0.4, width: s*0.04, height: s*0.06)).fill()
-
-        case "thinking":
-            // 🐄 小牛思考 — 坐着托腮
-            drawBody(bx: cx, by: cy - s*0.05)
-            drawHead(hx: cx, hy: cy + s*0.28)
-            drawEyes(ex: cx, ey: cy + s*0.26, lookUp: true)
-            drawNose(nx: cx, ny: cy + s*0.18)
-            drawTail(tx: cx, ty: cy + s*0.05, wag: CGFloat(sin(Double(mascotPhase) * .pi * 2)))
-            // 问号呼吸
-            let qAlpha = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
-            let font = NSFont.systemFont(ofSize: s * 0.4, weight: .bold)
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(qAlpha)]
-            NSAttributedString(string: "?", attributes: attrs).draw(at: NSPoint(x: cx + s*0.2, y: cy + s*0.35))
-
-        case "fixing":
-            // 🐂 小牛修 bug — 拿锤子
-            let hammerOff = sin(Double(mascotPhase) * .pi * 4) * s * 0.06
-            drawBody(bx: cx, by: cy - s*0.05)
-            drawHead(hx: cx, hy: cy + s*0.28)
-            drawEyes(ex: cx, ey: cy + s*0.25)  // 眯眼用力
-            drawNose(nx: cx, ny: cy + s*0.18)
-            drawTail(tx: cx, ty: cy + s*0.05, wag: CGFloat(sin(Double(mascotPhase) * .pi * 3)))
-            // 锤子
-            NSColor(white: 0.6, alpha: 0.8).setFill()
-            NSBezierPath(roundedRect: NSRect(x: cx + s*0.15, y: cy + s*0.3 + CGFloat(hammerOff), width: s*0.15, height: s*0.07), xRadius: 2, yRadius: 2).fill()
-            NSColor(white: 0.5, alpha: 0.7).setFill()
-            NSBezierPath(rect: NSRect(x: cx + s*0.2, y: cy + s*0.15 + CGFloat(hammerOff), width: s*0.03, height: s*0.16)).fill()
-
-        case "error":
-            // 🐮 小牛倒地 — 晕
-            let tilt = CGFloat(sin(Double(mascotPhase) * .pi * 2)) * s * 0.03
-            drawBody(bx: cx + tilt, by: cy - s*0.08, lying: true)
-            drawHead(hx: cx + s*0.25 + tilt, hy: cy + s*0.05, faceUp: false)
-            drawEyes(ex: cx + s*0.25 + tilt, ey: cy + s*0.02, closed: true)
-            drawNose(nx: cx + s*0.25 + tilt, ny: cy - s*0.05, faceUp: false)
-            // 星星
-            let starAlpha = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 4))
-            let font = NSFont.systemFont(ofSize: s * 0.3, weight: .bold)
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.yellow.withAlphaComponent(starAlpha)]
-            NSAttributedString(string: "★", attributes: attrs).draw(at: NSPoint(x: cx + s*0.15, y: cy + s*0.2))
-
-        default: // idle
-            // 🐄 小牛躺平休息 — Zzz
-            drawBody(bx: cx - s*0.05, by: cy - s*0.08, lying: true)
-            drawHead(hx: cx + s*0.2, hy: cy + s*0.06, faceUp: false)
-            drawEyes(ex: cx + s*0.2, ey: cy + s*0.03, closed: true)
-            drawNose(nx: cx + s*0.2, ny: cy - s*0.04, faceUp: false)
-            // Zzz 呼吸
-            let zAlpha = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
-            let font = NSFont.systemFont(ofSize: s * 0.25, weight: .medium)
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(zAlpha)]
-            NSAttributedString(string: "z z z", attributes: attrs).draw(at: NSPoint(x: cx - s*0.15, y: cy + s*0.2))
-        }
-    }
-
-    func drawCatMascot(center: NSPoint, size: CGFloat) {
-        let cx = center.x, cy = center.y, s = size
-        let bodyColor = NSColor(red: 1.0, green: 0.75, blue: 0.4, alpha: 0.9)
-        let spotColor = NSColor(red: 0.9, green: 0.5, blue: 0.2, alpha: 0.7)
-        let earColor = NSColor(red: 1.0, green: 0.6, blue: 0.7, alpha: 0.8)
-        let catEye = NSColor(red: 0.1, green: 0.7, blue: 0.2, alpha: 0.9)
-
-        func drawCatHead(hx: CGFloat, hy: CGFloat) {
-            let headR = s * 0.22
-            let head = NSBezierPath()
-            head.appendArc(withCenter: NSPoint(x: hx, y: hy), radius: headR, startAngle: 0, endAngle: 360)
-            bodyColor.setFill(); head.fill()
-            for dx: CGFloat in [-s*0.12, s*0.12] {
-                let ear = NSBezierPath()
-                ear.move(to: NSPoint(x: hx + dx - s*0.06, y: hy + headR - s*0.02))
-                ear.line(to: NSPoint(x: hx + dx, y: hy + headR + s*0.12))
-                ear.line(to: NSPoint(x: hx + dx + s*0.06, y: hy + headR - s*0.02))
-                ear.close(); bodyColor.setFill(); ear.fill()
-                let inner = NSBezierPath()
-                inner.move(to: NSPoint(x: hx + dx - s*0.03, y: hy + headR))
-                inner.line(to: NSPoint(x: hx + dx, y: hy + headR + s*0.07))
-                inner.line(to: NSPoint(x: hx + dx + s*0.03, y: hy + headR))
-                inner.close(); earColor.setFill(); inner.fill()
-            }
-            for dx: CGFloat in [-s*0.06, s*0.06] {
-                catEye.setFill(); NSBezierPath(ovalIn: NSRect(x: hx + dx - s*0.025, y: hy - s*0.02, width: s*0.05, height: s*0.06)).fill()
-            }
-            let nose = NSBezierPath()
-            nose.move(to: NSPoint(x: hx, y: hy - s*0.04))
-            nose.line(to: NSPoint(x: hx - s*0.03, y: hy - s*0.07))
-            nose.line(to: NSPoint(x: hx + s*0.03, y: hy - s*0.07))
-            nose.close(); NSColor(red: 0.9, green: 0.4, blue: 0.5, alpha: 0.9).setFill(); nose.fill()
-        }
-
-        switch mascotState {
-        case "working":
-            let legAnim = sin(Double(mascotPhase) * .pi * 6) * s * 0.04
-            bodyColor.setFill(); NSBezierPath(ovalIn: NSRect(x: cx - s*0.15, y: cy - s*0.12 + legAnim, width: s*0.35, height: s*0.2)).fill()
-            spotColor.setFill(); NSBezierPath(ovalIn: NSRect(x: cx + s*0.02, y: cy - s*0.05 + legAnim, width: s*0.1, height: s*0.08)).fill()
-            drawCatHead(hx: cx + s*0.22, hy: cy + s*0.1 + legAnim)
-        case "thinking":
-            bodyColor.setFill(); NSBezierPath(ovalIn: NSRect(x: cx - s*0.15, y: cy - s*0.1, width: s*0.35, height: s*0.18)).fill()
-            drawCatHead(hx: cx + s*0.18, hy: cy + s*0.1)
-            let qA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
-            NSAttributedString(string: "?", attributes: [.font: NSFont.systemFont(ofSize: s * 0.22, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(qA)]).draw(at: NSPoint(x: cx - s*0.1, y: cy + s*0.18))
-        case "fixing":
-            bodyColor.setFill(); NSBezierPath(ovalIn: NSRect(x: cx - s*0.15, y: cy - s*0.1, width: s*0.35, height: s*0.18)).fill()
-            drawCatHead(hx: cx + s*0.22, hy: cy + s*0.1)
-            let pA = sin(Double(mascotPhase) * .pi * 4) * s * 0.04
-            bodyColor.setFill(); NSBezierPath(ovalIn: NSRect(x: cx + s*0.02 + pA, y: cy + s*0.05, width: s*0.08, height: s*0.05)).fill()
-        case "error":
-            let tilt = CGFloat(sin(Double(mascotPhase) * .pi * 2)) * s * 0.03
-            bodyColor.setFill(); NSBezierPath(ovalIn: NSRect(x: cx - s*0.15, y: cy - s*0.1 + tilt, width: s*0.35, height: s*0.18)).fill()
-            drawCatHead(hx: cx + s*0.22, hy: cy + s*0.1 + tilt)
-            let sA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 4))
-            NSAttributedString(string: "* *", attributes: [.font: NSFont.systemFont(ofSize: s * 0.2, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(sA)]).draw(at: NSPoint(x: cx - s*0.08, y: cy + s*0.2))
-        default:
-            bodyColor.setFill(); NSBezierPath(ovalIn: NSRect(x: cx - s*0.15, y: cy - s*0.1, width: s*0.35, height: s*0.18)).fill()
-            drawCatHead(hx: cx + s*0.2, hy: cy + s*0.08)
-            let zA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
-            NSAttributedString(string: "z z z", attributes: [.font: NSFont.systemFont(ofSize: s * 0.22, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(zA)]).draw(at: NSPoint(x: cx - s*0.15, y: cy + s*0.2))
-        }
-    }
-
-    func drawRobotMascot(center: NSPoint, size: CGFloat) {
-        let cx = center.x, cy = center.y, s = size
-        let bodyColor = NSColor(red: 0.75, green: 0.82, blue: 0.92, alpha: 1.0)
-        let accent = NSColor(red: 0.2, green: 0.75, blue: 1.0, alpha: 1.0)
-        let ledColor = NSColor(red: 0.0, green: 1.0, blue: 0.8, alpha: 1.0)
-
-        func drawRobotHead(hx: CGFloat, hy: CGFloat) {
-            let r = s * 0.2
-            bodyColor.setFill(); NSBezierPath(roundedRect: NSRect(x: hx - r, y: hy - r, width: r*2, height: r*2), xRadius: s*0.04, yRadius: s*0.04).fill()
-            NSColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 1.0).set()
-            NSBezierPath.defaultLineWidth = 1.5
-            let ant = NSBezierPath(); ant.move(to: NSPoint(x: hx, y: hy + r)); ant.line(to: NSPoint(x: hx, y: hy + r + s*0.1)); ant.stroke()
-            accent.setFill(); NSBezierPath(ovalIn: NSRect(x: hx - s*0.025, y: hy + r + s*0.08, width: s*0.05, height: s*0.05)).fill()
-            let bl = CGFloat(0.5 + 0.5 * sin(Double(mascotPhase) * .pi * 3))
-            for dx: CGFloat in [-s*0.07, s*0.07] {
-                ledColor.withAlphaComponent(bl).setFill()
-                NSBezierPath(roundedRect: NSRect(x: hx + dx - s*0.03, y: hy - s*0.05, width: s*0.06, height: s*0.05), xRadius: 1, yRadius: 1).fill()
-            }
-            NSColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 1.0).set()
-            NSBezierPath.defaultLineWidth = 1
-            let m = NSBezierPath(); m.move(to: NSPoint(x: hx - s*0.06, y: hy - s*0.09)); m.line(to: NSPoint(x: hx + s*0.06, y: hy - s*0.09)); m.stroke()
-        }
-
-        switch mascotState {
-        case "working":
-            let bounce = sin(Double(mascotPhase) * .pi * 6) * s * 0.03
-            bodyColor.setFill(); NSBezierPath(roundedRect: NSRect(x: cx - s*0.15, y: cy - s*0.12 + bounce, width: s*0.3, height: s*0.2), xRadius: s*0.03, yRadius: s*0.03).fill()
-            accent.setFill(); NSBezierPath(roundedRect: NSRect(x: cx - s*0.08, y: cy - s*0.05 + bounce, width: s*0.16, height: s*0.04), xRadius: 2, yRadius: 2).fill()
-            drawRobotHead(hx: cx + s*0.22, hy: cy + s*0.12 + bounce)
-        case "thinking":
-            bodyColor.setFill(); NSBezierPath(roundedRect: NSRect(x: cx - s*0.15, y: cy - s*0.1, width: s*0.3, height: s*0.18), xRadius: s*0.03, yRadius: s*0.03).fill()
-            drawRobotHead(hx: cx + s*0.18, hy: cy + s*0.1)
-            let dA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
-            NSAttributedString(string: "...", attributes: [.font: NSFont.systemFont(ofSize: s * 0.22, weight: .medium), .foregroundColor: accent.withAlphaComponent(dA)]).draw(at: NSPoint(x: cx - s*0.08, y: cy + s*0.18))
-        case "fixing":
-            bodyColor.setFill(); NSBezierPath(roundedRect: NSRect(x: cx - s*0.15, y: cy - s*0.1, width: s*0.3, height: s*0.18), xRadius: s*0.03, yRadius: s*0.03).fill()
-            drawRobotHead(hx: cx + s*0.22, hy: cy + s*0.1)
-            let tA = sin(Double(mascotPhase) * .pi * 4) * s * 0.05
-            accent.setFill(); NSBezierPath(ovalIn: NSRect(x: cx + s*0.02 + tA, y: cy + s*0.03, width: s*0.06, height: s*0.06)).fill()
-        case "error":
-            let shake = CGFloat(sin(Double(mascotPhase) * .pi * 8)) * s * 0.02
-            bodyColor.setFill(); NSBezierPath(roundedRect: NSRect(x: cx - s*0.15 + shake, y: cy - s*0.1, width: s*0.3, height: s*0.18), xRadius: s*0.03, yRadius: s*0.03).fill()
-            drawRobotHead(hx: cx + s*0.22 + shake, hy: cy + s*0.1)
-            let eA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 4))
-            NSAttributedString(string: "! !", attributes: [.font: NSFont.systemFont(ofSize: s * 0.18, weight: .bold), .foregroundColor: NSColor.red.withAlphaComponent(eA)]).draw(at: NSPoint(x: cx - s*0.06, y: cy + s*0.2))
-        default:
-            bodyColor.setFill(); NSBezierPath(roundedRect: NSRect(x: cx - s*0.15, y: cy - s*0.1, width: s*0.3, height: s*0.18), xRadius: s*0.03, yRadius: s*0.03).fill()
-            drawRobotHead(hx: cx + s*0.2, hy: cy + s*0.08)
-            let zA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
-            NSAttributedString(string: "z z z", attributes: [.font: NSFont.systemFont(ofSize: s * 0.22, weight: .medium), .foregroundColor: accent.withAlphaComponent(zA)]).draw(at: NSPoint(x: cx - s*0.15, y: cy + s*0.2))
-        }
-    }
-}
 
 // ============================================================
 // SettingsWindowController
@@ -1440,6 +963,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var floatingCheck: NSButton!
     var mascotSelect: NSPopUpButton!
     var horizontalCheck: NSButton!
+    var displayModeSegment: NSSegmentedControl!
     var showStatusCheck: NSButton!
     var sizeSlider: NSSlider!; var sizeLabel: NSTextField!
     var containerView: NSView!
@@ -1453,6 +977,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var hookStatusLabel: NSTextField!
     var themeSelect: NSPopUpButton!
     var colorWell: NSColorWell!
+    var weatherCheck: NSButton!
+    var weatherStatusLabel: NSTextField!
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
@@ -1578,14 +1104,14 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         opacityLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
         opacityLabel.isEditable = false; opacityLabel.isBordered = false; opacityLabel.backgroundColor = .clear
         opacityLabel.stringValue = "\(Int(c.opacity * 100))%"; opacityLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(opacityLabel); y -= 32
+        view.addSubview(opacityLabel); y -= 28
 
         label("吉祥物:", y + 4)
         mascotSelect = NSPopUpButton(frame: NSRect(x: rx, y: y + 2, width: 140, height: 24))
         mascotSelect.addItems(withTitles: ["🐂 小牛", "🐱 小猫", "🤖 机器人"])
         mascotSelect.selectItem(at: ["cow": 0, "cat": 1, "robot": 2][c.mascotType] ?? 0)
         mascotSelect.target = self; mascotSelect.action = #selector(mascotChanged)
-        view.addSubview(mascotSelect); y -= 32
+        view.addSubview(mascotSelect); y -= 28
 
         label("主题:", y + 4)
         themeSelect = NSPopUpButton(frame: NSRect(x: rx, y: y + 2, width: 140, height: 24))
@@ -1598,7 +1124,35 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         colorWell.color = NSColor(fromHex: c.customColor) ?? NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0)
         colorWell.isHidden = c.theme != "custom"
         colorWell.target = self; colorWell.action = #selector(themeChanged)
-        view.addSubview(colorWell); y -= 32
+        view.addSubview(colorWell); y -= 28
+
+        weatherCheck = NSButton(frame: NSRect(x: rx, y: y, width: 200, height: 24))
+        weatherCheck.setButtonType(.switch); weatherCheck.title = "天气主题（实时天气背景）"
+        weatherCheck.state = c.weatherThemeEnabled ? .on : .off
+        weatherCheck.target = self; weatherCheck.action = #selector(weatherToggled)
+        view.addSubview(weatherCheck); y -= 20
+
+        weatherStatusLabel = NSTextField(frame: NSRect(x: rx + 10, y: y + 4, width: 200, height: 16))
+        weatherStatusLabel.isEditable = false; weatherStatusLabel.isBordered = false
+        weatherStatusLabel.backgroundColor = .clear; weatherStatusLabel.font = NSFont.systemFont(ofSize: 10)
+        weatherStatusLabel.textColor = NSColor.tertiaryLabelColor
+        weatherStatusLabel.toolTip = "双击循环切换天气预览"
+        weatherStatusLabel.alignment = .left
+        if c.weatherThemeEnabled {
+            let wm = WeatherManager.shared
+            weatherStatusLabel.stringValue = "\(wm.currentCondition.displayName(code: wm.weatherCode)) \(Int(wm.currentTemp))°C"
+        }
+        view.addSubview(weatherStatusLabel)
+
+        // 双击天气标签区域切换预览
+        let dblClickView = DoubleClickView(frame: NSRect(x: rx + 10, y: y, width: 200, height: 24))
+        dblClickView.onDoubleClick = { [weak self] in
+            self?.cycleWeatherPreview()
+        }
+        view.addSubview(dblClickView)
+        y -= 28
+
+        label("闪烁速度:", y + 4)
         blinkSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
         blinkSlider.minValue = 0.2; blinkSlider.maxValue = 2.0; blinkSlider.doubleValue = c.blinkSpeed
         blinkSlider.target = self; blinkSlider.action = #selector(sliderChanged)
@@ -1606,52 +1160,59 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         blinkLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
         blinkLabel.isEditable = false; blinkLabel.isBordered = false; blinkLabel.backgroundColor = .clear
         blinkLabel.stringValue = String(format: "%.1fs", c.blinkSpeed); blinkLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(blinkLabel); y -= 32
+        view.addSubview(blinkLabel); y -= 28
 
         label("窗口大小:", y + 4)
         sizeSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
         sizeSlider.minValue = 30; sizeSlider.maxValue = 120; sizeSlider.doubleValue = c.windowSize
-        sizeSlider.target = self; sizeSlider.action = #selector(sliderChanged)
+        sizeSlider.target = self; sizeSlider.action = #selector(sizeSliderChanged)
         view.addSubview(sizeSlider)
         sizeLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
         sizeLabel.isEditable = false; sizeLabel.isBordered = false; sizeLabel.backgroundColor = .clear
         sizeLabel.stringValue = "\(Int(c.windowSize))"; sizeLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(sizeLabel); y -= 32
+        view.addSubview(sizeLabel); y -= 28
 
-        horizontalCheck = NSButton(frame: NSRect(x: lx + 30, y: y, width: 260, height: 24))
-        horizontalCheck.setButtonType(.switch); horizontalCheck.title = "横向排列红绿灯"
-        horizontalCheck.state = c.horizontal ? .on : .off
+        label("显示样式:", y + 4)
+        displayModeSegment = NSSegmentedControl(labels: ["竖向", "横向", "迷你"], trackingMode: .selectOne, target: self, action: #selector(displayModeChanged))
+        displayModeSegment.frame = NSRect(x: rx, y: y, width: 180, height: 24)
+        displayModeSegment.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let modeIdx = ["vertical": 0, "horizontal": 1, "mini": 2][c.displayMode] ?? 0
+        displayModeSegment.selectedSegment = modeIdx
+        view.addSubview(displayModeSegment)
+        // 保留 hidden checkbox 兼容 saveSettings
+        horizontalCheck = NSButton(frame: NSRect(x: -999, y: -999, width: 1, height: 1))
+        horizontalCheck.setButtonType(.switch); horizontalCheck.state = c.horizontal ? .on : .off
         view.addSubview(horizontalCheck); y -= 32
 
-        showStatusCheck = NSButton(frame: NSRect(x: lx + 30, y: y, width: 260, height: 24))
+        showStatusCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         showStatusCheck.setButtonType(.switch); showStatusCheck.title = "显示底部状态文字"
         showStatusCheck.state = c.showStatusText ? .on : .off
         view.addSubview(showStatusCheck); y -= 36
 
-        y -= 6; separator(y + 2); y -= 18
+        separator(y + 2); y -= 18
         sectionTitle("行为", y + 2); y -= 8
 
-        autoLaunchCheck = NSButton(frame: NSRect(x: lx + 30, y: y, width: 200, height: 24))
+        autoLaunchCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         autoLaunchCheck.setButtonType(.switch); autoLaunchCheck.title = "开机自动启动"
         autoLaunchCheck.state = c.autoLaunch ? .on : .off
-        view.addSubview(autoLaunchCheck); y -= 30
+        view.addSubview(autoLaunchCheck); y -= 28
 
-        notifyCheck = NSButton(frame: NSRect(x: lx + 30, y: y, width: 260, height: 24))
+        notifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         notifyCheck.setButtonType(.switch); notifyCheck.title = "任务完成时发送通知"
         notifyCheck.state = c.notifyOnDone ? .on : .off
-        view.addSubview(notifyCheck); y -= 30
+        view.addSubview(notifyCheck); y -= 28
 
-        fullscreenCheck = NSButton(frame: NSRect(x: lx + 30, y: y, width: 260, height: 24))
+        fullscreenCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         fullscreenCheck.setButtonType(.switch); fullscreenCheck.title = "全屏应用上层显示"
         fullscreenCheck.state = c.showOnFullscreen ? .on : .off
-        view.addSubview(fullscreenCheck); y -= 30
+        view.addSubview(fullscreenCheck); y -= 28
 
-        floatingCheck = NSButton(frame: NSRect(x: lx + 30, y: y, width: 200, height: 24))
+        floatingCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         floatingCheck.setButtonType(.switch); floatingCheck.title = "窗口悬浮置顶"
         floatingCheck.state = c.isFloating ? .on : .off
-        view.addSubview(floatingCheck); y -= 36
+        view.addSubview(floatingCheck); y -= 40
 
-        let saveBtn = NSButton(frame: NSRect(x: 110, y: y, width: 120, height: 32))
+        let saveBtn = NSButton(frame: NSRect(x: 110, y: y, width: 160, height: 32))
         saveBtn.title = "保存并应用"; saveBtn.bezelStyle = .rounded
         saveBtn.target = self; saveBtn.action = #selector(saveSettings)
         view.addSubview(saveBtn)
@@ -1692,6 +1253,100 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             view.addSubview(descField); y -= 54
         }
 
+        // 分隔线
+        let sep = NSView(frame: NSRect(x: 16, y: y + 2, width: 328, height: 1))
+        sep.wantsLayer = true; sep.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        view.addSubview(sep); y -= 12
+
+        // 测试体验标题
+        let testTitle = NSTextField(frame: NSRect(x: 16, y: y, width: 300, height: 20))
+        testTitle.isEditable = false; testTitle.isBordered = false; testTitle.backgroundColor = .clear
+        testTitle.stringValue = "测试体验 — 点击按钮实时预览灯效"
+        testTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        testTitle.textColor = NSColor.secondaryLabelColor
+        view.addSubview(testTitle); y -= 30
+
+        // 5 个测试按钮 + 1 个恢复按钮，两行排列
+        let testButtons: [(String, String, NSColor)] = [
+            ("🟢 空闲", "idle", NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)),
+            ("🟡 思考", "thinking", NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0)),
+            ("🔴 执行", "working", NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)),
+            ("🟡 修复", "fixing", NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0)),
+            ("🔴 警告", "error", NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)),
+        ]
+        let btnW: CGFloat = 60, btnH: CGFloat = 28, gap: CGFloat = 6
+        let startX: CGFloat = 16
+        for (i, (label, state, _)) in testButtons.enumerated() {
+            let btn = NSButton(frame: NSRect(x: startX + CGFloat(i) * (btnW + gap), y: y, width: btnW, height: btnH))
+            btn.title = label; btn.bezelStyle = .rounded; btn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+            btn.tag = ["idle": 0, "thinking": 1, "working": 2, "fixing": 3, "error": 4][state] ?? 0
+            btn.target = self; btn.action = #selector(testLightState(_:))
+            view.addSubview(btn)
+        }
+
+        // 恢复按钮
+        let resetBtn = NSButton(frame: NSRect(x: startX + 5 * (btnW + gap), y: y, width: btnW, height: btnH))
+        resetBtn.title = "⏹ 恢复"; resetBtn.bezelStyle = .rounded; resetBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        resetBtn.target = self; resetBtn.action = #selector(testLightReset(_:))
+        view.addSubview(resetBtn)
+        y -= 34
+
+        // 测试状态标签
+        let testStatusLabel = NSTextField(frame: NSRect(x: 16, y: y, width: 340, height: 18))
+        testStatusLabel.isEditable = false; testStatusLabel.isBordered = false; testStatusLabel.backgroundColor = .clear
+        testStatusLabel.font = NSFont.systemFont(ofSize: 11)
+        testStatusLabel.textColor = NSColor.tertiaryLabelColor
+        testStatusLabel.stringValue = "点击上方按钮，观察红绿灯实时切换效果"
+        testStatusLabel.tag = 999
+        view.addSubview(testStatusLabel)
+    }
+
+    @objc func testLightState(_ sender: NSButton) {
+        let states = ["idle", "thinking", "working", "fixing", "error"]
+        let labels = ["空闲", "思考", "执行", "修复", "警告"]
+        let idx = sender.tag
+        guard idx >= 0, idx < states.count else { return }
+        let state = states[idx]
+        let label = labels[idx]
+        let port = appDelegate.config.serverURL.components(separatedBy: ":").last ?? "8866"
+        guard let url = URL(string: "http://127.0.0.1:\(port)/api/state") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = Data("{\"state\": \"\(state)\", \"message\": \"测试: \(label)\", \"session_id\": \"test-preview\"}".utf8)
+        req.timeoutInterval = 2
+        URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let label = self.rulesContainer?.viewWithTag(999) as? NSTextField {
+                    if let http = resp as? HTTPURLResponse, http.statusCode == 200 {
+                        label.stringValue = "当前预览: \(label)  ✅"
+                        label.textColor = NSColor.systemGreen
+                    } else {
+                        label.stringValue = "切换失败，请检查服务"
+                        label.textColor = NSColor.systemRed
+                    }
+                }
+            }
+        }.resume()
+    }
+
+    @objc func testLightReset(_ sender: NSButton) {
+        let port = appDelegate.config.serverURL.components(separatedBy: ":").last ?? "8866"
+        // 清除测试会话
+        guard let url = URL(string: "http://127.0.0.1:\(port)/api/session/test-preview") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "DELETE"
+        req.timeoutInterval = 2
+        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let label = self.rulesContainer?.viewWithTag(999) as? NSTextField {
+                    label.stringValue = "已恢复，点击上方按钮重新测试"
+                    label.textColor = NSColor.tertiaryLabelColor
+                }
+            }
+        }.resume()
     }
 
     // ============================================================
@@ -1951,7 +1606,34 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         pollLabel.stringValue = String(format: "%.1fs", pollSlider.doubleValue)
         opacityLabel.stringValue = "\(Int(opacitySlider.doubleValue * 100))%"
         blinkLabel.stringValue = String(format: "%.1fs", blinkSlider.doubleValue)
+
+        // 实时预览：只更新属性，不重建窗口
+        appDelegate.config.opacity = opacitySlider.doubleValue
+        appDelegate.config.blinkSpeed = blinkSlider.doubleValue
+        appDelegate.config.pollInterval = pollSlider.doubleValue
+        if let w = appDelegate.lightWindow {
+            w.alphaValue = opacitySlider.doubleValue
+        }
+    }
+
+    private var sizeRebuildTimer: Timer?
+
+    @objc func sizeSliderChanged() {
         sizeLabel.stringValue = "\(Int(sizeSlider.doubleValue))"
+        appDelegate.config.windowSize = sizeSlider.doubleValue
+        // 防抖：松手后 0.15s 才 rebuild，避免拖动时不断重建
+        sizeRebuildTimer?.invalidate()
+        sizeRebuildTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+            self?.appDelegate.rebuildWithCurrentConfig()
+        }
+    }
+
+    @objc func displayModeChanged() {
+        let modes = ["vertical", "horizontal", "mini"]
+        appDelegate.config.displayMode = modes[displayModeSegment.indexOfSelectedItem]
+        appDelegate.config.horizontal = (appDelegate.config.displayMode == "horizontal")
+        horizontalCheck.state = appDelegate.config.horizontal ? .on : .off
+        appDelegate.rebuildWithCurrentConfig()
     }
 
     @objc func testPortAction(_ sender: NSButton) {
@@ -1992,7 +1674,6 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if theme == "custom" {
             appDelegate.shellView?.customColor = colorWell.color
         }
-        // update window background
         let view = appDelegate.lightWindow?.contentView
         switch theme {
         case "light":
@@ -2002,6 +1683,58 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         default:
             view?.layer?.backgroundColor = NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0).cgColor
         }
+    }
+
+    @objc func weatherToggled() {
+        let enabled = weatherCheck.state == .on
+        if enabled {
+            weatherStatusLabel.stringValue = "获取天气中..."
+            weatherStatusLabel.textColor = NSColor.tertiaryLabelColor
+            WeatherManager.shared.onWeatherUpdate = { [weak self] condition, temp in
+                self?.weatherStatusLabel.stringValue = "\(condition.displayName(code: WeatherManager.shared.weatherCode)) \(Int(temp))°C"
+            }
+            WeatherManager.shared.startPolling()
+        } else {
+            WeatherManager.shared.stopPolling()
+            weatherStatusLabel.stringValue = ""
+        }
+    }
+
+    private var weatherPreviewIndex: Int = 0
+    // 预览循环: 各种天气+强度组合
+    private let weatherPresets: [(condition: WeatherCondition, code: Int, label: String)] = [
+        (.sunny, 0, "☀️ 晴天"),
+        (.cloudy, 3, "☁️ 阴天"),
+        (.rainy, 51, "🌦️ 毛毛雨"),
+        (.rainy, 61, "🌦️ 小雨"),
+        (.rainy, 63, "🌧️ 中雨"),
+        (.rainy, 65, "🌧️ 大雨"),
+        (.rainy, 82, "⛈️ 暴雨"),
+        (.snowy, 71, "🌨️ 小雪"),
+        (.snowy, 73, "❄️ 中雪"),
+        (.snowy, 75, "❄️ 大雪"),
+        (.thunderstorm, 95, "⛈️ 雷暴"),
+    ]
+
+    @objc func cycleWeatherPreview() {
+        weatherPreviewIndex = (weatherPreviewIndex + 1) % weatherPresets.count
+        let preset = weatherPresets[weatherPreviewIndex]
+
+        if appDelegate.weatherView == nil, let view = appDelegate.lightWindow?.contentView {
+            let wv = WeatherView(frame: view.bounds)
+            wv.autoresizingMask = [.width, .height]
+            if let shell = appDelegate.shellView {
+                view.addSubview(wv, positioned: .above, relativeTo: shell)
+            } else {
+                view.addSubview(wv)
+            }
+            appDelegate.weatherView = wv
+        }
+        appDelegate.weatherView?.condition = preset.condition
+        appDelegate.weatherView?.weatherCode = preset.code
+        appDelegate.log("[天气预览] 切换到: \(preset.label)")
+        weatherStatusLabel.stringValue = "\(preset.label) 点击继续切换 →"
+        weatherStatusLabel.textColor = NSColor.controlAccentColor
     }
 
     @objc func saveSettings() {
@@ -2015,12 +1748,16 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.notifyOnDone = notifyCheck.state == .on
         c.showOnFullscreen = fullscreenCheck.state == .on
         c.horizontal = horizontalCheck.state == .on
+        let modes = ["vertical", "horizontal", "mini"]
+        c.displayMode = modes[displayModeSegment.indexOfSelectedItem]
+        c.horizontal = (c.displayMode == "horizontal")
         c.showStatusText = showStatusCheck.state == .on
         c.isFloating = floatingCheck.state == .on
         c.mascotType = ["cow", "cat", "robot"][mascotSelect.indexOfSelectedItem]
         c.theme = ["dark", "light", "custom"][themeSelect.indexOfSelectedItem]
         if let hex = colorWell.color.hexString { c.customColor = hex }
-        appDelegate.log("[保存] mascotType=\(c.mascotType) theme=\(c.theme)")
+        c.weatherThemeEnabled = weatherCheck.state == .on
+        appDelegate.log("[保存] mascotType=\(c.mascotType) theme=\(c.theme) weather=\(c.weatherThemeEnabled)")
         c.save()
         if c.autoLaunch { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
         appDelegate.restartWithNewConfig()
@@ -2031,29 +1768,5 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
 }
 
 // ============================================================
-// Main
+// Main — 入口在 main.swift
 // ============================================================
-
-extension NSColor {
-    convenience init?(fromHex hex: String) {
-        var h = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
-        guard h.count == 6, let v = UInt64(h, radix: 16) else { return nil }
-        self.init(red: CGFloat((v >> 16) & 0xFF) / 255.0,
-                  green: CGFloat((v >> 8) & 0xFF) / 255.0,
-                  blue: CGFloat(v & 0xFF) / 255.0,
-                  alpha: 1.0)
-    }
-
-    var hexString: String? {
-        guard let rgb = usingColorSpace(.sRGB) else { return nil }
-        let r = Int(rgb.redComponent * 255)
-        let g = Int(rgb.greenComponent * 255)
-        let b = Int(rgb.blueComponent * 255)
-        return String(format: "#%02X%02X%02X", r, g, b)
-    }
-}
-
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()

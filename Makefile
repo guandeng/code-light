@@ -2,7 +2,7 @@ VERSION ?= 1.0.0
 APP_NAME = CodeLight
 APP_BUNDLE = $(APP_NAME).app
 ZIP_FILE = $(APP_NAME)-v$(VERSION).zip
-SWIFT_SRC = CodeLight.swift
+SWIFT_SRC = main.swift Config.swift Weather.swift UI.swift CodeLight.swift
 SERVER_SRC = light-server.py
 BINARY = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 RESOURCES = $(APP_BUNDLE)/Contents/Resources
@@ -11,9 +11,9 @@ RESOURCES = $(APP_BUNDLE)/Contents/Resources
 
 build: ## 编译 Swift 并更新 App Bundle
 	swiftc -O -target arm64-apple-macosx13.0 \
-		-framework Cocoa -framework Foundation -framework ServiceManagement -framework UserNotifications \
+		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
 		-o $(BINARY) $(SWIFT_SRC)
-	cp $(SERVER_SRC) $(RESOURCES)/light-server.py
+	-[ -f $(SERVER_SRC) ] && cp $(SERVER_SRC) $(RESOURCES)/light-server.py || true
 	@echo "✅ 编译完成: $(APP_BUNDLE)"
 
 clean: ## 清理编译产物

@@ -28,10 +28,16 @@
 ## 截图
 
 <p align="center">
-  <img src="images/success.png" width="120" alt="空闲 - 绿灯" />
-  <img src="images/doing.png" width="120" alt="空闲 - 绿灯" />
-  <img src="images/fail.png" width="120" alt="执行中 - 红灯" />
+  <img src="images/t-h.png" width="280" alt="横版模式" />
+  <img src="images/t-l.png" width="280" alt="纵版模式" />
+  <img src="images/t-hong.png" width="280" alt="执行中 - 红灯" />
 </p>
+<p align="center">
+  <img src="images/s-h.png" width="120" alt="竖模式" />
+  <img src="images/s-l.png" width="120" alt="竖模式" />
+  <img src="images/s-hong.png" width="120" alt="执行中 - 红灯" />
+</p>
+
 
 ## 快速开始
 
