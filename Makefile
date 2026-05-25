@@ -10,7 +10,7 @@ RESOURCES = $(APP_BUNDLE)/Contents/Resources
 .PHONY: build clean package release
 
 build: ## 编译 Swift 并更新 App Bundle
-	swiftc -O \
+	swiftc -O -target arm64-apple-macosx13.0 \
 		-framework Cocoa -framework Foundation -framework ServiceManagement -framework UserNotifications \
 		-o $(BINARY) $(SWIFT_SRC)
 	cp $(SERVER_SRC) $(RESOURCES)/light-server.py
