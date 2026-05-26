@@ -120,7 +120,9 @@ class ShellView: NSView {
 // ============================================================
 
 class RealTrafficLightView: NSView {
-    var lampColor: NSColor = .red
+    var lampColor: NSColor = .red {
+        didSet { if !lampColor.isEqual(oldValue) { needsDisplay = true } }
+    }
     var isOn: Bool = false {
         didSet {
             if isOn != oldValue {
@@ -205,11 +207,10 @@ class RealTrafficLightView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         if bounds.width < 20 {
-            // Edge bar mode: solid color fill
             if isOn {
-                lampColor.withAlphaComponent(brightness).setFill()
+                lampColor.setFill()
             } else {
-                lampColor.withAlphaComponent(0.15).setFill()
+                lampColor.withAlphaComponent(0.25).setFill()
             }
             bounds.fill()
             return

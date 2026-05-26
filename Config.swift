@@ -26,6 +26,8 @@ struct AppConfig {
     var theme: String = "dark"     // "dark" | "light" | "custom"
     var customColor: String = "#1C1E22"
     var weatherThemeEnabled: Bool = false
+    var weatherCity: String = "深圳"
+    var hookSetupDismissed = false
 
     static func load() -> AppConfig {
         let ud = UserDefaults.standard
@@ -52,6 +54,8 @@ struct AppConfig {
         if let v = ud.string(forKey: "theme") { c.theme = v }
         if let v = ud.string(forKey: "customColor") { c.customColor = v }
         if ud.object(forKey: "weatherThemeEnabled") != nil { c.weatherThemeEnabled = ud.bool(forKey: "weatherThemeEnabled") }
+        if let v = ud.string(forKey: "weatherCity") { c.weatherCity = v }
+        c.hookSetupDismissed = ud.bool(forKey: "hookSetupDismissed")
         return c
     }
 
@@ -78,6 +82,8 @@ struct AppConfig {
         ud.set(theme, forKey: "theme")
         ud.set(customColor, forKey: "customColor")
         ud.set(weatherThemeEnabled, forKey: "weatherThemeEnabled")
+        ud.set(weatherCity, forKey: "weatherCity")
+        ud.set(hookSetupDismissed, forKey: "hookSetupDismissed")
     }
 }
 
@@ -94,6 +100,16 @@ let STATES: [String: LightStateDef] = [
 ]
 
 let SEVERITY = ["error": 4, "working": 3, "fixing": 3, "thinking": 2, "idle": 0]
+
+let CITIES: [(name: String, lat: Double, lon: Double)] = [
+    ("北京", 39.90, 116.40), ("上海", 31.23, 121.47), ("广州", 23.13, 113.26),
+    ("深圳", 22.55, 114.10), ("杭州", 30.27, 120.15), ("成都", 30.57, 104.07),
+    ("武汉", 30.59, 114.31), ("南京", 32.06, 118.80), ("重庆", 29.56, 106.55),
+    ("西安", 34.26, 108.94), ("苏州", 31.30, 120.62), ("天津", 39.13, 117.20),
+    ("长沙", 28.23, 112.94), ("郑州", 34.75, 113.65), ("青岛", 36.07, 120.38),
+    ("大连", 38.91, 121.60), ("厦门", 24.48, 118.09), ("昆明", 25.04, 102.68),
+    ("哈尔滨", 45.75, 126.65), ("沈阳", 41.80, 123.43),
+]
 
 extension NSColor {
     convenience init?(fromHex hex: String) {

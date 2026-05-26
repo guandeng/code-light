@@ -238,6 +238,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var marqueeOffset: Int = 0
     var tooltipView: NSView?
     var settingsWindowController: SettingsWindowController?
+    var mouseDownMonitor: Any?
+    var mouseUpMonitor: Any?
     var sessions: [String: [String: Any]] = [:]
     var shellView: ShellView?
     var trafficContainer: TrafficLightContainer?
@@ -289,6 +291,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             WeatherManager.shared.startPolling()
         }
         log("[启动] OK")
+        checkHookSetup()
+    }
+
+    private func checkHookSetup() {
+        if config.hookSetupDismissed { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if hasCodeLightHook(path: home + "/.claude/settings.json") { return }
+        if hasCodeLightHook(path: home + "/.codex/hooks.json") { return }
+        if hasCodeLightHook(path: home + "/.cursor/settings.json") { return }
+
+        let alert = NSAlert()
+        alert.messageText = "配置 Hook"
+        alert.informativeText = "检测到尚未配置任何 AI 编程助手的 Hook，红绿灯无法自动切换状态。\n\n请在「设置 → 配置 Hook」中勾选你使用的工具并应用配置。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "去配置")
+        alert.addButton(withTitle: "以后再说")
+        if alert.runModal() == .alertFirstButtonReturn {
+            openSettings()
+        } else {
+            config.hookSetupDismissed = true
+            config.save()
+        }
+    }
+
+    private func hasCodeLightHook(path: String) -> Bool {
+        guard let data = FileManager.default.contents(atPath: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = json["hooks"] as? [String: Any] else { return false }
+        for (_, val) in hooks {
+            if let arr = val as? [[String: Any]] {
+                for entry in arr {
+                    if let hookArr = entry["hooks"] as? [[String: Any]] {
+                        for h in hookArr {
+                            if let cmd = h["command"] as? String, cmd.contains("8866/api/state") { return true }
+                        }
+                    }
+                }
+            }
+        }
+        return false
     }
 
     func startServer() {
@@ -443,8 +485,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defaultX = screen.width - lightW - 16
             defaultY = screen.height - lightH - 80
         }
-        let posX: CGFloat = isEdgeBar ? defaultX : (config.windowX ?? defaultX)
-        let posY: CGFloat = config.windowY ?? defaultY
+        var posX: CGFloat = isEdgeBar ? defaultX : (config.windowX ?? defaultX)
+        var posY: CGFloat = config.windowY ?? defaultY
+
+        // 确保窗口完全在屏幕可见区域内
+        if !isEdgeBar {
+            let sf = NSScreen.main!.visibleFrame
+            posX = max(sf.minX, min(posX, sf.maxX - lightW))
+            posY = max(sf.minY, min(posY, sf.maxY - lightH))
+        }
 
         if lightWindow != nil {
             NotificationCenter.default.removeObserver(self, name: NSWindow.didMoveNotification, object: lightWindow)
@@ -476,7 +525,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             bgColor = NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: config.opacity)
         }
-        view.layer?.backgroundColor = bgColor.cgColor
+        view.layer?.backgroundColor = isEdgeBar ? NSColor.black.cgColor : bgColor.cgColor
         view.layer?.cornerRadius = isEdgeBar ? 3 : (isMini ? lightW / 2 : min(lightW, lightH) / 2)
         view.layer?.masksToBounds = true
 
@@ -624,11 +673,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 鼠标按下/松开追踪拖动状态
-        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+        if let m = mouseDownMonitor { NSEvent.removeMonitor(m) }
+        if let m = mouseUpMonitor { NSEvent.removeMonitor(m) }
+        mouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
             if event.window === self?.lightWindow { self?.isDragging = true }
             return event
         }
-        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+        mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
             guard let self = self else { return event }
             if self.isDragging {
                 self.isDragging = false
@@ -670,10 +721,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if lightWindow.isVisible { lightWindow.orderOut(nil) } else { lightWindow.makeKeyAndOrderFront(nil) }
     }
     @objc func handleDoubleClick(_ sender: NSClickGestureRecognizer) {
-        let modes = ["vertical", "horizontal", "mini"]
+        let modes = ["vertical", "horizontal", "mini", "edgebar"]
         let idx = modes.firstIndex(of: config.displayMode) ?? 0
         config.displayMode = modes[(idx + 1) % modes.count]
         config.horizontal = (config.displayMode == "horizontal")
+        config.edgeBar = (config.displayMode == "edgebar") ? (config.edgeBar ?? "right") : nil
         config.save()
         rebuildWithCurrentConfig()
     }
@@ -734,7 +786,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 只有非 idle 状态才高频更新（闪烁/呼吸/吉祥物动画）
         // idle 状态每 25 帧（~1.25s）更新一次吉祥物即可
-        let needsAnim = state != "idle" || Int(animPhase * 100) % 25 == 0
+        // Mini 模式 idle 状态完全跳过动画
+        let isMiniIdle = config.displayMode == "mini" && state == "idle"
+        let needsAnim = isMiniIdle ? false : (state != "idle" || Int(animPhase * 100) % 25 == 0)
         if needsAnim {
             redView.mascotPhase = animPhase
             yellowView.mascotPhase = animPhase
@@ -879,11 +933,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
                 let s = STATES[sn] ?? STATES["idle"]!
-                if !blink {
-                    self.redView.isOn = s.red
-                    self.yellowView.isOn = s.yellow
+                if self.config.displayMode != "mini" {
+                    if !blink {
+                        self.redView.isOn = s.red
+                        self.yellowView.isOn = s.yellow
+                    }
+                    self.greenView.isOn = s.green
                 }
-                self.greenView.isOn = s.green
                 // 底部文字颜色跟随灯色
                 let stateColors: [String: NSColor] = [
                     "idle": NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 0.8),
@@ -992,6 +1048,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var colorWell: NSColorWell!
     var weatherCheck: NSButton!
     var weatherStatusLabel: NSTextField!
+    var citySelect: NSPopUpButton!
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
@@ -1157,6 +1214,16 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         view.addSubview(weatherStatusLabel)
 
+        // 城市选择
+        let cityNames = CITIES.map { $0.name }
+        let cityX = rx + 200
+        citySelect = NSPopUpButton(frame: NSRect(x: cityX, y: y - 2, width: 90, height: 24))
+        citySelect.addItems(withTitles: cityNames)
+        citySelect.selectItem(withTitle: c.weatherCity)
+        citySelect.target = self; citySelect.action = #selector(cityChanged)
+        citySelect.font = NSFont.systemFont(ofSize: 11)
+        view.addSubview(citySelect)
+
         // 双击天气标签区域切换预览
         let dblClickView = DoubleClickView(frame: NSRect(x: rx + 10, y: y, width: 200, height: 24))
         dblClickView.onDoubleClick = { [weak self] in
@@ -1186,10 +1253,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         view.addSubview(sizeLabel); y -= 28
 
         label("显示样式:", y + 4)
-        displayModeSegment = NSSegmentedControl(labels: ["竖向", "横向", "迷你"], trackingMode: .selectOne, target: self, action: #selector(displayModeChanged))
-        displayModeSegment.frame = NSRect(x: rx, y: y, width: 180, height: 24)
+        displayModeSegment = NSSegmentedControl(labels: ["竖向", "横向", "迷你", "磁吸"], trackingMode: .selectOne, target: self, action: #selector(displayModeChanged))
+        displayModeSegment.frame = NSRect(x: rx, y: y, width: 240, height: 24)
         displayModeSegment.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        let modeIdx = ["vertical": 0, "horizontal": 1, "mini": 2][c.displayMode] ?? 0
+        let modeIdx = ["vertical": 0, "horizontal": 1, "mini": 2, "edgebar": 3][c.displayMode] ?? 0
         displayModeSegment.selectedSegment = modeIdx
         view.addSubview(displayModeSegment)
         // 保留 hidden checkbox 兼容 saveSettings
@@ -1523,9 +1590,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let toolName = tool == "claude" ? "$CLAUDE_TOOL_NAME" : (tool == "cursor" ? "$CURSOR_TOOL_NAME" : "")
         let sessionId = tool == "claude" ? "$CLAUDE_SESSION_ID" : (tool == "cursor" ? "$CURSOR_SESSION_ID" : "codex")
         return [
-            "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing \(toolName)\", \"session_id\": \"\(sessionId)\"}'"]]]],
-            "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"\(sessionId)\"}'"]]]],
-            "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"\(sessionId)\"}'"]]]],
+            "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing \(toolName)\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
+            "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
+            "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
         ]
     }
 
@@ -1545,9 +1612,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if claudeCodeCheck.state == .on {
             let path = home + "/.claude/settings.json"
             let hooks: [String: Any] = [
-                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing $CLAUDE_TOOL_NAME\", \"session_id\": \"$CLAUDE_SESSION_ID\"}'"]]]],
-                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"$CLAUDE_SESSION_ID\"}'"]]]],
-                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"$CLAUDE_SESSION_ID\"}'"]]]],
+                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing $CLAUDE_TOOL_NAME\", \"session_id\": \"$CLAUDE_SESSION_ID\"}' || echo '{}'"]]]],
+                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"$CLAUDE_SESSION_ID\"}' || echo '{}'"]]]],
+                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"$CLAUDE_SESSION_ID\"}' || echo '{}'"]]]],
             ]
             let ok = writeHooksToFile(path: path, hooks: hooks, fm: fm)
             results.append(ok ? "✅ Claude Code" : "❌ Claude Code")
@@ -1566,9 +1633,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             // 2) hooks.json: hook 配置（格式与 Claude Code 一致）
             let hooksPath = dir + "/hooks.json"
             let hooks: [String: Any] = [
-                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing\", \"session_id\": \"codex\"}'"]]]],
-                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"codex\"}'"]]]],
-                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"codex\"}'"]]]],
+                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
+                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
+                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
             ]
             if !writeHooksToFile(path: hooksPath, hooks: hooks, fm: fm) { codexOk = false }
             results.append(codexOk ? "✅ Codex" : "❌ Codex")
@@ -1581,9 +1648,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             if !fm.fileExists(atPath: dir) { try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true) }
             let path = dir + "/settings.json"
             let hooks: [String: Any] = [
-                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing $CURSOR_TOOL_NAME\", \"session_id\": \"$CURSOR_SESSION_ID\"}'"]]]],
-                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"$CURSOR_SESSION_ID\"}'"]]]],
-                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"$CURSOR_SESSION_ID\"}'"]]]],
+                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing $CURSOR_TOOL_NAME\", \"session_id\": \"$CURSOR_SESSION_ID\"}' || echo '{}'"]]]],
+                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"$CURSOR_SESSION_ID\"}' || echo '{}'"]]]],
+                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"$CURSOR_SESSION_ID\"}' || echo '{}'"]]]],
             ]
             let ok = writeHooksToFile(path: path, hooks: hooks, fm: fm)
             results.append(ok ? "✅ Cursor" : "❌ Cursor")
@@ -1658,9 +1725,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func displayModeChanged() {
-        let modes = ["vertical", "horizontal", "mini"]
+        let modes = ["vertical", "horizontal", "mini", "edgebar"]
         appDelegate.config.displayMode = modes[displayModeSegment.indexOfSelectedItem]
         appDelegate.config.horizontal = (appDelegate.config.displayMode == "horizontal")
+        appDelegate.config.edgeBar = (appDelegate.config.displayMode == "edgebar") ? (appDelegate.config.edgeBar ?? "right") : nil
         horizontalCheck.state = appDelegate.config.horizontal ? .on : .off
         appDelegate.rebuildWithCurrentConfig()
     }
@@ -1714,9 +1782,29 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    @objc func cityChanged() {
+        guard let city = citySelect.titleOfSelectedItem else { return }
+        appDelegate.config.weatherCity = city
+        appDelegate.config.save()
+        weatherStatusLabel.stringValue = "获取天气中..."
+        WeatherManager.shared.fetchWeatherForCity()
+    }
+
     @objc func weatherToggled() {
         let enabled = weatherCheck.state == .on
         if enabled {
+            if appDelegate.weatherView == nil, let view = appDelegate.lightWindow?.contentView {
+                let wv = WeatherView(frame: view.bounds)
+                wv.autoresizingMask = [.width, .height]
+                if let shell = appDelegate.shellView {
+                    view.addSubview(wv, positioned: .above, relativeTo: shell)
+                } else {
+                    view.addSubview(wv)
+                }
+                appDelegate.weatherView = wv
+            }
+            appDelegate.weatherView?.condition = WeatherManager.shared.currentCondition
+            appDelegate.weatherView?.weatherCode = WeatherManager.shared.weatherCode
             weatherStatusLabel.stringValue = "获取天气中..."
             weatherStatusLabel.textColor = NSColor.tertiaryLabelColor
             WeatherManager.shared.onWeatherUpdate = { [weak self] condition, temp in
@@ -1724,6 +1812,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             }
             WeatherManager.shared.startPolling()
         } else {
+            appDelegate.weatherView?.removeFromSuperview()
+            appDelegate.weatherView = nil
             WeatherManager.shared.stopPolling()
             weatherStatusLabel.stringValue = ""
         }
@@ -1777,9 +1867,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.notifyOnDone = notifyCheck.state == .on
         c.showOnFullscreen = fullscreenCheck.state == .on
         c.horizontal = horizontalCheck.state == .on
-        let modes = ["vertical", "horizontal", "mini"]
+        let modes = ["vertical", "horizontal", "mini", "edgebar"]
         c.displayMode = modes[displayModeSegment.indexOfSelectedItem]
         c.horizontal = (c.displayMode == "horizontal")
+        c.edgeBar = (c.displayMode == "edgebar") ? (c.edgeBar ?? "right") : nil
         c.showStatusText = showStatusCheck.state == .on
         c.isFloating = floatingCheck.state == .on
         c.mascotType = ["cow", "cat", "robot"][mascotSelect.indexOfSelectedItem]

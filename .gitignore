@@ -8,3 +8,4 @@ CodeLight.app/
 CodeLight 2.app/
 *.zip
 !images/
+.claude/

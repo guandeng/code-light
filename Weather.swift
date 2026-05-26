@@ -131,9 +131,8 @@ class DoubleClickView: NSView {
     }
 }
 
-class WeatherManager: NSObject, CLLocationManagerDelegate {
+class WeatherManager: NSObject {
     static let shared = WeatherManager()
-    private var locationManager: CLLocationManager?
     private var timer: Timer?
     var currentCondition: WeatherCondition = .sunny
     var currentTemp: Double = 0
@@ -145,16 +144,10 @@ class WeatherManager: NSObject, CLLocationManagerDelegate {
     }
 
     func startPolling() {
-        if locationManager == nil {
-            let lm = CLLocationManager()
-            lm.delegate = self
-            lm.desiredAccuracy = kCLLocationAccuracyKilometer
-            locationManager = lm
-        }
-        locationManager?.requestLocation()
+        fetchWeatherForCity()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 100, repeats: true) { [weak self] _ in
-            self?.locationManager?.requestLocation()
+            self?.fetchWeatherForCity()
         }
     }
 
@@ -163,13 +156,10 @@ class WeatherManager: NSObject, CLLocationManagerDelegate {
         timer = nil
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let loc = locations.last else { return }
-        fetchWeather(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
-    }
-
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        fetchWeather(lat: 39.9, lon: 116.4)
+    func fetchWeatherForCity() {
+        let city = (NSApp.delegate as? AppDelegate)?.config.weatherCity ?? "深圳"
+        let coords = CITIES.first(where: { $0.name == city }) ?? CITIES[3]
+        fetchWeather(lat: coords.lat, lon: coords.lon)
     }
 
     private func fetchWeather(lat: Double, lon: Double) {
@@ -214,12 +204,19 @@ class WeatherView: NSView {
     private var miscTimer: Timer?
     private var particleLayers: [CAShapeLayer] = []
     private var cleanupCounter: Int = 0
+    private var brightnessTimer: Timer?
+
+    deinit { brightnessTimer?.invalidate() }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.masksToBounds = false
         updateWeather()
+        // 每 5 分钟刷新一次亮度
+        brightnessTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            self?.updateWeather()
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -235,6 +232,8 @@ class WeatherView: NSView {
         rainTimer?.invalidate(); rainTimer = nil
         snowTimer?.invalidate(); snowTimer = nil
         miscTimer?.invalidate(); miscTimer = nil
+        // brightnessTimer 在 clearLayers 时不清理，只在 deinit 时清理
+        // 因为 updateWeather 调用 clearLayers 后会重新创建 brightnessTimer
     }
 
     private func updateWeather() {
@@ -242,44 +241,64 @@ class WeatherView: NSView {
         guard let layer = layer else { return }
         let I = intensity  // 0.0~1.0
 
+        // 根据当前时间计算亮度系数：白天 1.0，夜晚 0.4，平滑过渡
+        let hour = Calendar.current.component(.hour, from: Date())
+        let minute = Calendar.current.component(.minute, from: Date())
+        let t = Double(hour) + Double(minute) / 60.0
+        // 6~8 点日出过渡，18~20 点日落过渡
+        let dayBrightness: Double
+        if t >= 8 && t <= 18 { dayBrightness = 1.0 }
+        else if t >= 6 && t < 8 { dayBrightness = 0.4 + 0.6 * (t - 6) / 2 }
+        else if t > 18 && t <= 20 { dayBrightness = 1.0 - 0.6 * (t - 18) / 2 }
+        else { dayBrightness = 0.4 }
+
         let grad = CAGradientLayer()
         grad.frame = bounds
         grad.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
 
+        let bAlpha = CGFloat(0.5 + 0.5 * dayBrightness)
+
         switch condition {
         case .sunny:
-            grad.colors = [
-                NSColor(red: 0.30, green: 0.55, blue: 0.88, alpha: 0.6).cgColor,
-                NSColor(red: 0.85, green: 0.70, blue: 0.35, alpha: 0.4).cgColor,
-            ]
-            addSunGlows()
+            if dayBrightness > 0.7 {
+                grad.colors = [
+                    NSColor(red: 0.30, green: 0.55, blue: 0.88, alpha: bAlpha).cgColor,
+                    NSColor(red: 0.85, green: 0.70, blue: 0.35, alpha: bAlpha - 0.1).cgColor,
+                ]
+                addSunGlows()
+            } else {
+                grad.colors = [
+                    NSColor(red: 0.08, green: 0.10, blue: 0.25, alpha: 0.6).cgColor,
+                    NSColor(red: 0.05, green: 0.06, blue: 0.15, alpha: 0.5).cgColor,
+                ]
+            }
         case .cloudy:
-            let dark = 0.65 - I * 0.15
+            let b = CGFloat(dayBrightness)
             grad.colors = [
-                NSColor(white: dark + 0.1, alpha: 0.5).cgColor,
-                NSColor(white: dark, alpha: 0.4).cgColor,
+                NSColor(red: 0.55 * b + 0.12, green: 0.65 * b + 0.14, blue: 0.78 * b + 0.18, alpha: bAlpha).cgColor,
+                NSColor(red: 0.50 * b + 0.08, green: 0.58 * b + 0.10, blue: 0.72 * b + 0.14, alpha: bAlpha - 0.1).cgColor,
             ]
             addCloudDrifts()
         case .rainy:
-            // 小雨亮一点，暴雨暗很多
-            let top = 0.45 - I * 0.25  // 0.45(毛毛雨) → 0.20(暴雨)
-            let bot = 0.35 - I * 0.25  // 0.35 → 0.10
+            let top = (0.45 - I * 0.25) * dayBrightness
+            let bot = (0.35 - I * 0.25) * dayBrightness
             grad.colors = [
-                NSColor(white: top, alpha: 0.6).cgColor,
-                NSColor(white: bot, alpha: 0.5).cgColor,
+                NSColor(white: top, alpha: bAlpha).cgColor,
+                NSColor(white: bot, alpha: bAlpha - 0.1).cgColor,
             ]
             addRain()
         case .snowy:
-            let alpha = 0.3 + I * 0.25
+            let alpha = (0.3 + I * 0.25) * dayBrightness
             grad.colors = [
-                NSColor(red: 0.72, green: 0.80, blue: 0.92, alpha: alpha).cgColor,
-                NSColor(white: 0.92, alpha: alpha - 0.1).cgColor,
+                NSColor(red: 0.72, green: 0.80, blue: 0.92, alpha: alpha * bAlpha).cgColor,
+                NSColor(white: 0.92, alpha: (alpha - 0.1) * bAlpha).cgColor,
             ]
             addSnow()
         case .thunderstorm:
+            let dark = dayBrightness * 0.5
             grad.colors = [
-                NSColor(white: 0.12, alpha: 0.7).cgColor,
-                NSColor(white: 0.08, alpha: 0.6).cgColor,
+                NSColor(white: 0.12 * dark, alpha: bAlpha).cgColor,
+                NSColor(white: 0.08 * dark, alpha: bAlpha - 0.1).cgColor,
             ]
             addRain()
             startLightning()
