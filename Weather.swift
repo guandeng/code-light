@@ -163,9 +163,12 @@ class WeatherManager: NSObject {
     }
 
     private func fetchWeather(lat: Double, lon: Double) {
-        let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current_weather=true"
+        let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current_weather=true&timezone=auto"
         guard let url = URL(string: urlStr) else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+        var request = URLRequest(url: url)
+        request.setValue("CodeLight/1.0", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 10
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
             guard let self = self, let data = data else { return }
             do {
                 if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],

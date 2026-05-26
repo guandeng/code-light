@@ -240,7 +240,7 @@ class RealTrafficLightView: NSView {
         if isOn {
             lampColor.withAlphaComponent(0.25).setFill()
         } else {
-            NSColor(white: 0.06, alpha: 1.0).setFill()
+            lampColor.withAlphaComponent(0.05).setFill()
         }
         holePath.fill()
 
@@ -251,7 +251,7 @@ class RealTrafficLightView: NSView {
         if isOn {
             lampColor.withAlphaComponent(brightness * 0.15).setFill()
         } else {
-            NSColor(white: 0.08, alpha: 1.0).setFill()
+            lampColor.withAlphaComponent(0.06).setFill()
         }
         lampPath.fill()
 
@@ -260,7 +260,7 @@ class RealTrafficLightView: NSView {
         let spacing = dotR * 2.8
         let rows = Int((lampR + spacing) / (spacing * 0.866)) + 1
         let onColor = lampColor.withAlphaComponent(brightness)
-        let offColor = NSColor(white: 0.12, alpha: 1.0)
+        let offColor = lampColor.withAlphaComponent(0.08)
 
         // 先裁切到灯珠圆形区域
         let clipPath = NSBezierPath()
@@ -316,6 +316,7 @@ class RealTrafficLightView: NSView {
         switch mascotType {
         case "cat": drawCatMascot(center: center, size: size)
         case "robot": drawRobotMascot(center: center, size: size)
+        case "horse": drawHorseMascot(center: center, size: size)
         default: drawCowMascot(center: center, size: size)
         }
     }
@@ -654,6 +655,128 @@ class RealTrafficLightView: NSView {
             drawRobotHead(hx: cx + s*0.2, hy: cy + s*0.08)
             let zA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
             NSAttributedString(string: "z z z", attributes: [.font: NSFont.systemFont(ofSize: s * 0.22, weight: .medium), .foregroundColor: accent.withAlphaComponent(zA)]).draw(at: NSPoint(x: cx - s*0.15, y: cy + s*0.2))
+        }
+    }
+
+    func drawHorseMascot(center: NSPoint, size: CGFloat) {
+        let cx = center.x, cy = center.y, s = size
+        let bodyColor = NSColor(red: 0.72, green: 0.45, blue: 0.25, alpha: 0.9)
+        let maneColor = NSColor(white: 0.15, alpha: 0.85)
+        let hoofColor = NSColor(white: 0.25, alpha: 0.8)
+        let eyeColor = NSColor(white: 0.1, alpha: 0.9)
+        let noseColor = NSColor(red: 0.55, green: 0.3, blue: 0.2, alpha: 0.9)
+
+        func drawHorseHead(hx: CGFloat, hy: CGFloat, faceUp: Bool = true) {
+            let dir: CGFloat = faceUp ? 1 : -1
+            bodyColor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: hx - s*0.12, y: hy - s*0.08*dir, width: s*0.24, height: s*0.22)).fill()
+            noseColor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: hx - s*0.08, y: hy - s*0.06*dir, width: s*0.16, height: s*0.12)).fill()
+            NSColor(white: 0.2, alpha: 0.6).setFill()
+            NSBezierPath(ovalIn: NSRect(x: hx - s*0.04, y: hy - s*0.03*dir, width: s*0.025, height: s*0.02)).fill()
+            NSBezierPath(ovalIn: NSRect(x: hx + s*0.02, y: hy - s*0.03*dir, width: s*0.025, height: s*0.02)).fill()
+            eyeColor.setFill()
+            let ey = hy + s*0.04*dir
+            NSBezierPath(ovalIn: NSRect(x: hx - s*0.07, y: ey - s*0.025, width: s*0.04, height: s*0.05)).fill()
+            NSBezierPath(ovalIn: NSRect(x: hx + s*0.04, y: ey - s*0.025, width: s*0.04, height: s*0.05)).fill()
+            NSColor.white.withAlphaComponent(0.7).setFill()
+            NSBezierPath(ovalIn: NSRect(x: hx - s*0.055, y: ey + s*0.01, width: s*0.015, height: s*0.015)).fill()
+            NSBezierPath(ovalIn: NSRect(x: hx + s*0.055, y: ey + s*0.01, width: s*0.015, height: s*0.015)).fill()
+            for dx: CGFloat in [-s*0.07, s*0.07] {
+                bodyColor.setFill()
+                let ear = NSBezierPath()
+                ear.move(to: NSPoint(x: hx + dx - s*0.03, y: hy + s*0.08*dir))
+                ear.line(to: NSPoint(x: hx + dx, y: hy + s*0.16*dir))
+                ear.line(to: NSPoint(x: hx + dx + s*0.03, y: hy + s*0.08*dir))
+                ear.close(); ear.fill()
+            }
+            maneColor.setFill()
+            let mane = NSBezierPath()
+            mane.move(to: NSPoint(x: hx, y: hy + s*0.08*dir))
+            mane.curve(to: NSPoint(x: hx + s*0.15, y: hy + s*0.02*dir),
+                       controlPoint1: NSPoint(x: hx + s*0.08, y: hy + s*0.12*dir),
+                       controlPoint2: NSPoint(x: hx + s*0.14, y: hy + s*0.08*dir))
+            mane.curve(to: NSPoint(x: hx + s*0.2, y: hy - s*0.02*dir),
+                       controlPoint1: NSPoint(x: hx + s*0.16, y: hy + s*0.0*dir),
+                       controlPoint2: NSPoint(x: hx + s*0.2, y: hy + s*0.02*dir))
+            mane.lineWidth = s * 0.04; mane.stroke()
+        }
+
+        func drawHorseBody(bx: CGFloat, by: CGFloat, legAnim: CGFloat = 0, lying: Bool = false) {
+            if lying {
+                bodyColor.setFill()
+                NSBezierPath(ovalIn: NSRect(x: bx - s*0.28, y: by - s*0.12, width: s*0.56, height: s*0.24)).fill()
+            } else {
+                bodyColor.setFill()
+                NSBezierPath(ovalIn: NSRect(x: bx - s*0.2, y: by - s*0.22, width: s*0.4, height: s*0.38)).fill()
+                let legW = s * 0.05, legH = s * 0.18
+                hoofColor.setFill()
+                NSBezierPath(roundedRect: NSRect(x: bx - s*0.14, y: by - s*0.25 - legH + legAnim, width: legW, height: legH), xRadius: legW*0.3, yRadius: legW*0.3).fill()
+                NSBezierPath(roundedRect: NSRect(x: bx - s*0.05, y: by - s*0.25 - legH - legAnim, width: legW, height: legH), xRadius: legW*0.3, yRadius: legW*0.3).fill()
+                NSBezierPath(roundedRect: NSRect(x: bx + s*0.05, y: by - s*0.25 - legH + legAnim, width: legW, height: legH), xRadius: legW*0.3, yRadius: legW*0.3).fill()
+                NSBezierPath(roundedRect: NSRect(x: bx + s*0.12, y: by - s*0.25 - legH - legAnim, width: legW, height: legH), xRadius: legW*0.3, yRadius: legW*0.3).fill()
+            }
+            maneColor.setStroke()
+            let tail = NSBezierPath()
+            tail.move(to: NSPoint(x: bx - s*0.2, y: by))
+            tail.curve(to: NSPoint(x: bx - s*0.28, y: by + s*0.12),
+                       controlPoint1: NSPoint(x: bx - s*0.28, y: by + s*0.04),
+                       controlPoint2: NSPoint(x: bx - s*0.3, y: by + s*0.08))
+            tail.lineWidth = s * 0.03; tail.stroke()
+        }
+
+        switch mascotState {
+        case "working":
+            let runKeys: [CGFloat] = [0, 0.8, 1.0, 0.8, 0, -0.6, -0.8, -0.6]
+            let idx = Int(mascotPhase * CGFloat(runKeys.count)) % runKeys.count
+            let nxt = (idx + 1) % runKeys.count
+            let frac = mascotPhase * CGFloat(runKeys.count) - CGFloat(idx)
+            let legAnim = (runKeys[idx] + (runKeys[nxt] - runKeys[idx]) * frac) * s * 0.05
+            let sway = sin(Double(mascotPhase) * .pi * 6) * s * 0.03
+            let bx = cx + sway
+            drawHorseBody(bx: bx, by: cy - s*0.05, legAnim: legAnim)
+            drawHorseHead(hx: bx + s*0.28, hy: cy + s*0.18)
+            let wA = CGFloat(0.2 + 0.3 * sin(Double(mascotPhase) * .pi * 4))
+            NSColor.white.withAlphaComponent(wA).setStroke()
+            for i in 0..<3 {
+                let ly = cy + s*0.05 * CGFloat(i - 1)
+                let line = NSBezierPath()
+                line.move(to: NSPoint(x: bx - s*0.3 - s*0.1*CGFloat(i), y: ly))
+                line.line(to: NSPoint(x: bx - s*0.35 - s*0.1*CGFloat(i), y: ly))
+                line.lineWidth = 1; line.stroke()
+            }
+        case "thinking":
+            drawHorseBody(bx: cx, by: cy - s*0.05)
+            drawHorseHead(hx: cx + s*0.28, hy: cy + s*0.22)
+            let tapA = abs(sin(Double(mascotPhase) * .pi * 3)) * s * 0.03
+            hoofColor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: cx + s*0.12, y: cy - s*0.45 - tapA, width: s*0.06, height: s*0.03)).fill()
+            let qA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
+            NSAttributedString(string: "?", attributes: [.font: NSFont.systemFont(ofSize: s*0.35, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(qA)]).draw(at: NSPoint(x: cx - s*0.15, y: cy + s*0.25))
+        case "fixing":
+            drawHorseBody(bx: cx, by: cy - s*0.05)
+            drawHorseHead(hx: cx + s*0.28, hy: cy + s*0.22)
+            let stomp = sin(Double(mascotPhase) * .pi * 6) * s * 0.06
+            hoofColor.setFill()
+            NSBezierPath(roundedRect: NSRect(x: cx + s*0.12, y: cy - s*0.43 + stomp, width: s*0.06, height: s*0.16), xRadius: 2, yRadius: 2).fill()
+            let dA = CGFloat(0.4 + 0.4 * sin(Double(mascotPhase) * .pi * 5))
+            NSColor(red: 0.7, green: 0.5, blue: 0.3, alpha: dA).setFill()
+            for i in 0..<3 {
+                let dx = s * 0.05 * CGFloat(i) * CGFloat(cos(Double(mascotPhase) * .pi * 3 + Double(i)))
+                let dy = s * 0.04 * CGFloat(i) * CGFloat(sin(Double(mascotPhase) * .pi * 3 + Double(i)))
+                NSBezierPath(ovalIn: NSRect(x: cx + s*0.12 + dx, y: cy - s*0.5 - dy, width: s*0.025, height: s*0.025)).fill()
+            }
+        case "error":
+            let tilt = CGFloat(sin(Double(mascotPhase) * .pi * 2)) * s * 0.03
+            drawHorseBody(bx: cx + tilt, by: cy - s*0.08, lying: true)
+            drawHorseHead(hx: cx + s*0.25 + tilt, hy: cy + s*0.05, faceUp: false)
+            let sA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 4))
+            NSAttributedString(string: "★ ★", attributes: [.font: NSFont.systemFont(ofSize: s*0.25, weight: .bold), .foregroundColor: NSColor.yellow.withAlphaComponent(sA)]).draw(at: NSPoint(x: cx - s*0.05, y: cy + s*0.2))
+        default:
+            drawHorseBody(bx: cx, by: cy - s*0.05)
+            drawHorseHead(hx: cx + s*0.28, hy: cy + s*0.2)
+            let zA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
+            NSAttributedString(string: "z z z", attributes: [.font: NSFont.systemFont(ofSize: s*0.25, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(zA)]).draw(at: NSPoint(x: cx - s*0.15, y: cy + s*0.22))
         }
     }
 }

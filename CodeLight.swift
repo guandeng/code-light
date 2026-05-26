@@ -1178,8 +1178,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         label("吉祥物:", y + 4)
         mascotSelect = NSPopUpButton(frame: NSRect(x: rx, y: y + 2, width: 140, height: 24))
-        mascotSelect.addItems(withTitles: ["🐂 小牛", "🐱 小猫", "🤖 机器人"])
-        mascotSelect.selectItem(at: ["cow": 0, "cat": 1, "robot": 2][c.mascotType] ?? 0)
+        mascotSelect.addItems(withTitles: ["🐂 小牛", "🐱 小猫", "🤖 机器人", "🐴 小马"])
+        mascotSelect.selectItem(at: ["cow": 0, "cat": 1, "robot": 2, "horse": 3][c.mascotType] ?? 0)
         mascotSelect.target = self; mascotSelect.action = #selector(mascotChanged)
         view.addSubview(mascotSelect); y -= 28
 
@@ -1759,7 +1759,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func mascotChanged() {
-        let types = ["cow", "cat", "robot"]
+        let types = ["cow", "cat", "robot", "horse"]
         appDelegate.trafficContainer?.mascotType = types[mascotSelect.indexOfSelectedItem]
     }
 
@@ -1873,7 +1873,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.edgeBar = (c.displayMode == "edgebar") ? (c.edgeBar ?? "right") : nil
         c.showStatusText = showStatusCheck.state == .on
         c.isFloating = floatingCheck.state == .on
-        c.mascotType = ["cow", "cat", "robot"][mascotSelect.indexOfSelectedItem]
+        c.mascotType = ["cow", "cat", "robot", "horse"][mascotSelect.indexOfSelectedItem]
         c.theme = ["dark", "light", "custom"][themeSelect.indexOfSelectedItem]
         if let hex = colorWell.color.hexString { c.customColor = hex }
         c.weatherThemeEnabled = weatherCheck.state == .on
@@ -1888,33 +1888,43 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         updateStatusLabel.stringValue = "正在检查..."
         updateStatusLabel.textColor = NSColor.secondaryLabelColor
         let currentVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-        guard let url = URL(string: "https://api.github.com/repos/guandeng/code-light/releases/latest") else {
-            updateStatusLabel.stringValue = "检查失败"
-            return
-        }
-        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                guard let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let tagName = json["tag_name"] as? String else {
-                    self.updateStatusLabel.stringValue = "检查失败，请稍后重试"
-                    self.updateStatusLabel.textColor = NSColor.systemRed
-                    return
-                }
-                let latestVer = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "v"))
-                if latestVer.compare(currentVer, options: .numeric) == .orderedDescending {
-                    self.updateStatusLabel.stringValue = "发现新版本 \(tagName)"
-                    self.updateStatusLabel.textColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
-                    if let htmlUrl = json["html_url"] as? String, let releaseUrl = URL(string: htmlUrl) {
-                        NSWorkspace.shared.open(releaseUrl)
-                    }
-                } else {
-                    self.updateStatusLabel.stringValue = "当前已是最新版本"
-                    self.updateStatusLabel.textColor = NSColor.secondaryLabelColor
-                }
+        let task = Process()
+        task.launchPath = "/usr/bin/env"
+        task.arguments = ["gh", "api", "repos/guandeng/code-light/releases/latest", "--jq", ".tag_name"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+        do {
+            try task.launch()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0 else {
+                updateStatusLabel.stringValue = "检查失败（gh 未安装或未登录）"
+                updateStatusLabel.textColor = NSColor.systemRed
+                return
             }
-        }.resume()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let tagName = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard tagName.hasPrefix("v") else {
+                updateStatusLabel.stringValue = "检查失败"
+                updateStatusLabel.textColor = NSColor.systemRed
+                return
+            }
+            let latestVer = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "v"))
+            if latestVer.compare(currentVer, options: .numeric) == .orderedDescending {
+                updateStatusLabel.stringValue = "发现新版本 \(tagName)"
+                updateStatusLabel.textColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
+                let openTask = Process()
+                openTask.launchPath = "/usr/bin/open"
+                openTask.arguments = ["https://github.com/guandeng/code-light/releases/latest"]
+                try? openTask.launch()
+            } else {
+                updateStatusLabel.stringValue = "当前已是最新版本 (\(currentVer))"
+                updateStatusLabel.textColor = NSColor.secondaryLabelColor
+            }
+        } catch {
+            updateStatusLabel.stringValue = "检查失败"
+            updateStatusLabel.textColor = NSColor.systemRed
+        }
     }
 
     func windowWillClose(_ notification: Notification) { appDelegate.settingsWindowController = nil }
