@@ -244,6 +244,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var shellView: ShellView?
     var trafficContainer: TrafficLightContainer?
     var weatherView: WeatherView?
+    var notificationCenter: UNUserNotificationCenter?
 
     func log(_ msg: String) {
         let path = "/tmp/codelight.log"
@@ -270,10 +271,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         NSApp.setActivationPolicy(.regular)
-        UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            self.log("[通知] UN权限: \(granted), err: \(String(describing: error))")
-        }
+        setupNotifications()
         startServer()
         buildMenuBar()
         buildLightWindow()
@@ -312,6 +310,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             config.hookSetupDismissed = true
             config.save()
+        }
+    }
+
+    func setupNotifications() {
+        guard Bundle.main.bundleIdentifier != nil else {
+            log("[通知] 跳过: 缺少 Bundle Identifier")
+            return
+        }
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        notificationCenter = center
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            self.log("[通知] UN权限: \(granted), err: \(String(describing: error))")
         }
     }
 
@@ -917,7 +928,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.lastActiveCount = activeCount
 
                 // 通知：活跃数从 >0 变为 0（所有会话都完成了）
-                if prevActive > 0 && activeCount == 0 && self.config.notifyOnDone {
+                if prevActive > 0 && activeCount == 0 && self.config.notifyOnDone, let notificationCenter = self.notificationCenter {
                     let sessionCount = prevActive
                     let title = sessionCount == 1 ? "Claude Code 任务完成" : "\(sessionCount) 个任务全部完成"
                     let body = msg.isEmpty ? "所有会话已空闲" : msg
@@ -928,7 +939,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     content.sound = .default
                     let id = "claude-done-\(Int(Date().timeIntervalSince1970))"
                     let req = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-                    UNUserNotificationCenter.current().add(req) { error in
+                    notificationCenter.add(req) { error in
                         self.log("[通知] UN结果: \(error?.localizedDescription ?? "ok")")
                     }
                 }
@@ -1590,9 +1601,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let toolName = tool == "claude" ? "$CLAUDE_TOOL_NAME" : (tool == "cursor" ? "$CURSOR_TOOL_NAME" : "")
         let sessionId = tool == "claude" ? "$CLAUDE_SESSION_ID" : (tool == "cursor" ? "$CURSOR_SESSION_ID" : "codex")
         return [
-            "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing \(toolName)\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
-            "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
-            "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
+            "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:\(port)/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"working\", \"message\": \"executing \(toolName)\", \"session_id\": \"\(sessionId)\"}'\\'' || true; printf '\\''{}'\\'''"]]]],
+            "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:\(port)/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"\(sessionId)\"}'\\'' || true; printf '\\''{}'\\'''"]]]],
+            "Stop": [["matcher": "", "hooks": [["type": "command", "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:\(port)/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"\(sessionId)\"}'\\'' || true; printf '\\''{}'\\'''"]]]],
         ]
     }
 
@@ -1633,9 +1644,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             // 2) hooks.json: hook 配置（格式与 Claude Code 一致）
             let hooksPath = dir + "/hooks.json"
             let hooks: [String: Any] = [
-                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
-                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
-                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
+                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:\(port)/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"working\", \"message\": \"executing\", \"session_id\": \"codex\"}'\\'' || true; printf '\\''{}'\\'''"]]]],
+                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:\(port)/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"codex\"}'\\'' || true; printf '\\''{}'\\'''"]]]],
+                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:\(port)/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"codex\"}'\\'' || true; printf '\\''{}'\\'''"]]]],
             ]
             if !writeHooksToFile(path: hooksPath, hooks: hooks, fm: fm) { codexOk = false }
             results.append(codexOk ? "✅ Codex" : "❌ Codex")
