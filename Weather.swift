@@ -153,7 +153,7 @@ class WeatherManager: NSObject, CLLocationManagerDelegate {
         }
         locationManager?.requestLocation()
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 100, repeats: true) { [weak self] _ in
             self?.locationManager?.requestLocation()
         }
     }

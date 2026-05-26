@@ -578,6 +578,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rightMenu.addItem(withTitle: "退出", action: #selector(quitApp), keyEquivalent: "")
         view.menu = rightMenu
 
+        let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClick(_:)))
+        doubleClick.numberOfClicksRequired = 2
+        view.addGestureRecognizer(doubleClick)
+
         lightWindow.makeKeyAndOrderFront(nil)
 
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: lightWindow, queue: .main) { [weak self] _ in
@@ -664,6 +668,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleWindow() {
         if lightWindow.isVisible { lightWindow.orderOut(nil) } else { lightWindow.makeKeyAndOrderFront(nil) }
+    }
+    @objc func handleDoubleClick(_ sender: NSClickGestureRecognizer) {
+        let modes = ["vertical", "horizontal", "mini"]
+        let idx = modes.firstIndex(of: config.displayMode) ?? 0
+        config.displayMode = modes[(idx + 1) % modes.count]
+        config.horizontal = (config.displayMode == "horizontal")
+        config.save()
+        rebuildWithCurrentConfig()
     }
     @objc func openSettings() {
         if settingsWindowController == nil { settingsWindowController = SettingsWindowController(appDelegate: self) }
@@ -954,6 +966,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     let appDelegate: AppDelegate
     var serverField: NSTextField!
     var portTestLabel: NSTextField!
+    var updateStatusLabel: NSTextField!
     var pollSlider: NSSlider!; var pollLabel: NSTextField!
     var opacitySlider: NSSlider!; var opacityLabel: NSTextField!
     var blinkSlider: NSSlider!; var blinkLabel: NSTextField!
@@ -1217,14 +1230,30 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         saveBtn.target = self; saveBtn.action = #selector(saveSettings)
         view.addSubview(saveBtn)
 
-        let versionLabel = NSTextField(frame: NSRect(x: 0, y: y - 30, width: 420, height: 20))
+        let versionLabel = NSTextField(frame: NSRect(x: 0, y: y - 30, width: 300, height: 20))
         versionLabel.isEditable = false; versionLabel.isBordered = false; versionLabel.backgroundColor = .clear
-        versionLabel.alignment = .center
+        versionLabel.alignment = .right
         versionLabel.font = NSFont.systemFont(ofSize: 11)
         versionLabel.textColor = NSColor.tertiaryLabelColor
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
         versionLabel.stringValue = "CodeLight v\(ver)"
         view.addSubview(versionLabel)
+
+        let checkUpdateBtn = NSButton(frame: NSRect(x: 310, y: y - 30, width: 100, height: 20))
+        checkUpdateBtn.title = "检查更新"
+        checkUpdateBtn.bezelStyle = .inline
+        checkUpdateBtn.font = NSFont.systemFont(ofSize: 11)
+        checkUpdateBtn.target = self
+        checkUpdateBtn.action = #selector(checkForUpdate)
+        view.addSubview(checkUpdateBtn)
+
+        updateStatusLabel = NSTextField(frame: NSRect(x: 30, y: y - 55, width: 360, height: 20))
+        updateStatusLabel.isEditable = false; updateStatusLabel.isBordered = false; updateStatusLabel.backgroundColor = .clear
+        updateStatusLabel.alignment = .center
+        updateStatusLabel.font = NSFont.systemFont(ofSize: 11)
+        updateStatusLabel.textColor = NSColor.secondaryLabelColor
+        updateStatusLabel.stringValue = ""
+        view.addSubview(updateStatusLabel)
     }
 
     func buildRulesTab(_ view: NSView) {
@@ -1762,6 +1791,39 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if c.autoLaunch { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
         appDelegate.restartWithNewConfig()
         window?.close()
+    }
+
+    @objc func checkForUpdate() {
+        updateStatusLabel.stringValue = "正在检查..."
+        updateStatusLabel.textColor = NSColor.secondaryLabelColor
+        let currentVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        guard let url = URL(string: "https://api.github.com/repos/guandeng/code-light/releases/latest") else {
+            updateStatusLabel.stringValue = "检查失败"
+            return
+        }
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let tagName = json["tag_name"] as? String else {
+                    self.updateStatusLabel.stringValue = "检查失败，请稍后重试"
+                    self.updateStatusLabel.textColor = NSColor.systemRed
+                    return
+                }
+                let latestVer = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "v"))
+                if latestVer.compare(currentVer, options: .numeric) == .orderedDescending {
+                    self.updateStatusLabel.stringValue = "发现新版本 \(tagName)"
+                    self.updateStatusLabel.textColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
+                    if let htmlUrl = json["html_url"] as? String, let releaseUrl = URL(string: htmlUrl) {
+                        NSWorkspace.shared.open(releaseUrl)
+                    }
+                } else {
+                    self.updateStatusLabel.stringValue = "当前已是最新版本"
+                    self.updateStatusLabel.textColor = NSColor.secondaryLabelColor
+                }
+            }
+        }.resume()
     }
 
     func windowWillClose(_ notification: Notification) { appDelegate.settingsWindowController = nil }
