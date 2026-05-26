@@ -113,7 +113,7 @@ hooks = true
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -X POST http://127.0.0.1:8866/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing\", \"session_id\": \"codex\"}' || echo '{}'"
+            "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:8866/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"working\", \"message\": \"executing\", \"session_id\": \"codex\"}'\\'' || true; printf '\\''{}'\\'''"
           }
         ]
       }
@@ -124,7 +124,7 @@ hooks = true
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -X POST http://127.0.0.1:8866/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"codex\"}' || echo '{}'"
+            "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:8866/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"codex\"}'\\'' || true; printf '\\''{}'\\'''"
           }
         ]
       }
@@ -135,7 +135,7 @@ hooks = true
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -X POST http://127.0.0.1:8866/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"codex\"}' || echo '{}'"
+            "command": "sh -c 'curl -s --max-time 1 -o /dev/null -X POST http://127.0.0.1:8866/api/state -H '\\''Content-Type: application/json'\\'' -d '\\''{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"codex\"}'\\'' || true; printf '\\''{}'\\'''"
           }
         ]
       }

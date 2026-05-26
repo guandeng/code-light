@@ -4,12 +4,15 @@ APP_BUNDLE = $(APP_NAME).app
 ZIP_FILE = $(APP_NAME)-v$(VERSION).zip
 SWIFT_SRC = main.swift Config.swift Weather.swift UI.swift CodeLight.swift
 SERVER_SRC = light-server.py
+INFO_PLIST = Info.plist
 BINARY = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 RESOURCES = $(APP_BUNDLE)/Contents/Resources
 
 .PHONY: build clean package release
 
 build: ## 编译 Swift 并更新 App Bundle
+	mkdir -p $(APP_BUNDLE)/Contents/MacOS $(RESOURCES)
+	cp $(INFO_PLIST) $(APP_BUNDLE)/Contents/Info.plist
 	swiftc -O -target arm64-apple-macosx13.0 \
 		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
 		-o $(BINARY) $(SWIFT_SRC)
