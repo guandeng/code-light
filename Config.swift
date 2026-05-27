@@ -28,6 +28,7 @@ struct AppConfig {
     var weatherThemeEnabled: Bool = false
     var weatherCity: String = "深圳"
     var hookSetupDismissed = false
+    var notifyOnPermission: Bool = true
 
     static func load() -> AppConfig {
         let ud = UserDefaults.standard
@@ -56,6 +57,7 @@ struct AppConfig {
         if ud.object(forKey: "weatherThemeEnabled") != nil { c.weatherThemeEnabled = ud.bool(forKey: "weatherThemeEnabled") }
         if let v = ud.string(forKey: "weatherCity") { c.weatherCity = v }
         c.hookSetupDismissed = ud.bool(forKey: "hookSetupDismissed")
+        if ud.object(forKey: "notifyOnPermission") != nil { c.notifyOnPermission = ud.bool(forKey: "notifyOnPermission") }
         return c
     }
 
@@ -84,6 +86,7 @@ struct AppConfig {
         ud.set(weatherThemeEnabled, forKey: "weatherThemeEnabled")
         ud.set(weatherCity, forKey: "weatherCity")
         ud.set(hookSetupDismissed, forKey: "hookSetupDismissed")
+        ud.set(notifyOnPermission, forKey: "notifyOnPermission")
     }
 }
 
@@ -97,9 +100,10 @@ let STATES: [String: LightStateDef] = [
     "working":  LightStateDef(red: true,  yellow: false, green: false, blink: true,  label: "执行中"),
     "fixing":   LightStateDef(red: false, yellow: true,  green: false, blink: true,  label: "修复中"),
     "error":    LightStateDef(red: true,  yellow: false, green: false, blink: false, label: "警告中"),
+    "waiting":  LightStateDef(red: true,  yellow: false, green: false, blink: true,  label: "等待授权"),
 ]
 
-let SEVERITY = ["error": 4, "working": 3, "fixing": 3, "thinking": 2, "idle": 0]
+let SEVERITY = ["error": 4, "working": 3, "fixing": 3, "thinking": 2, "waiting": 2, "idle": 0]
 
 let CITIES: [(name: String, lat: Double, lon: Double)] = [
     ("北京", 39.90, 116.40), ("上海", 31.23, 121.47), ("广州", 23.13, 113.26),

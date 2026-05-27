@@ -22,6 +22,7 @@ class LightServer {
     private let sessionTimeout: TimeInterval = 300
     private let deadTimeout: TimeInterval = 3600
     var onLog: ((String) -> Void)?
+    var onPermissionRequest: (([String: Any]) -> Void)?
 
     private struct SessionEntry {
         var state: String; var message: String; var timestamp: Date
@@ -123,8 +124,35 @@ class LightServer {
                 let sid = String(path.dropFirst("/api/session/".count))
                 return handleDeleteSession(sid)
             }
+            if method == "POST", path == "/api/permission" {
+                return handlePermissionRequest(body: body)
+            }
+            if method == "GET", path.hasPrefix("/api/permission/") {
+                let remainder = String(path.dropFirst("/api/permission/".count))
+                let parts = remainder.components(separatedBy: "/")
+                let id = parts.first ?? remainder
+                // GET /api/permission/<id>/decision — 轮询决策
+                if parts.count == 2 && parts[1] == "decision" {
+                    return handlePermissionDecision(id: id)
+                }
+                // GET /api/permission/<id>/allow or /deny — 设置决策
+                if parts.count == 2 && (parts[1] == "allow" || parts[1] == "deny") {
+                    return handleSetPermissionDecision(id: id, action: parts[1])
+                }
+                // GET /api/permission/<id> — 也返回决策（兼容）
+                return handlePermissionDecision(id: id)
+            }
             return .init(status: 404, body: "{\"ok\":false,\"error\":\"not found\"}")
         }
+    }
+
+    func updateState(name: String, message: String, sessionId: String) {
+        guard STATES[name] != nil else { return }
+        let sid = sessionId.isEmpty ? "default" : sessionId
+        sessions[sid] = SessionEntry(state: name, message: message, timestamp: Date())
+        history.append(HistoryEntry(timestamp: Date().timeIntervalSince1970, state: name, message: message, session_id: String(sid.prefix(8)), light: stateLightDict(name)))
+        if history.count > maxHistory { history.removeFirst(history.count - maxHistory) }
+        onLog?("[状态] [\(sid.prefix(8))] \(name) — \(message)")
     }
 
     private func handlePostState(body: String?) -> RouteResult {
@@ -139,10 +167,7 @@ class LightServer {
         guard STATES[state] != nil else {
             return .init(status: 400, body: "{\"ok\":false,\"error\":\"invalid state: \(state)\"}")
         }
-        sessions[sessionId] = SessionEntry(state: state, message: message, timestamp: Date())
-        history.append(HistoryEntry(timestamp: Date().timeIntervalSince1970, state: state, message: message, session_id: String(sessionId.prefix(8)), light: stateLightDict(state)))
-        if history.count > maxHistory { history.removeFirst(history.count - maxHistory) }
-        onLog?("[状态] [\(sessionId.prefix(8))] \(state) — \(message)")
+        updateState(name: state, message: message, sessionId: sessionId)
         return .init(status: 200, body: jsonEncode(dictAggregateState()))
     }
 
@@ -160,6 +185,70 @@ class LightServer {
             sessions[sid] = SessionEntry(state: "idle", message: "超时", timestamp: now)
         }
         sessions = sessions.filter { now.timeIntervalSince($0.value.timestamp) <= deadTimeout }
+    }
+
+    // Permission request storage
+    private var permissionRequests: [String: [String: Any]] = [:]
+
+    func storeTestPermission(id: String, entry: [String: Any]) {
+        permissionRequests[id] = entry
+    }
+
+    private func handlePermissionRequest(body: String?) -> RouteResult {
+        guard let body = body,
+              let raw = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] else {
+            return .init(status: 400, body: "{\"ok\":false,\"error\":\"invalid json\"}")
+        }
+        let id = "perm-\(Int(Date().timeIntervalSince1970 * 1000))"
+        let entry: [String: Any] = [
+            "id": id,
+            "input": raw,
+            "status": "pending",
+            "decision": NSNull(),
+            "timestamp": Date().timeIntervalSince1970
+        ]
+        permissionRequests[id] = entry
+        onLog?("[权限] 收到请求: \(id)")
+        DispatchQueue.main.async {
+            self.onPermissionRequest?(entry)
+        }
+        return .init(status: 200, body: "{\"ok\":true,\"id\":\"\(id)\"}")
+    }
+
+    private func handlePermissionDecision(id: String) -> RouteResult {
+        let cleanId = String(id.prefix(30))
+        guard let entry = permissionRequests[cleanId] else {
+            return .init(status: 404, body: "{\"status\":\"unknown\"}")
+        }
+        let status = entry["status"] as? String ?? "pending"
+        if status == "pending" {
+            return .init(status: 200, body: "{\"status\":\"pending\"}")
+        }
+        let decision = entry["decision"] ?? [:]
+        return .init(status: 200, body: jsonEncode(["status": "done", "decision": decision] as [String: Any]))
+    }
+
+    private func handleSetPermissionDecision(id: String, action: String) -> RouteResult {
+        let cleanId = String(id.prefix(30))
+        guard permissionRequests[cleanId] != nil else {
+            return .init(status: 404, body: "{\"ok\":false,\"error\":\"not found\"}")
+        }
+        setPermissionDecision(id: cleanId, behavior: action)
+        return .init(status: 200, body: "{\"ok\":true}")
+    }
+
+    func setPermissionDecision(id: String, behavior: String, addRule: [String: Any]? = nil) {
+        guard permissionRequests[id] != nil else { return }
+        var decision: [String: Any] = ["decision": behavior]
+        if let rule = addRule {
+            decision["updatedPermissions"] = [["type": "addRules", "rules": [rule], "behavior": "allow", "destination": "localSettings"]]
+        }
+        permissionRequests[id]?["status"] = "done"
+        permissionRequests[id]?["decision"] = decision
+        onLog?("[权限] 决策: \(id) → \(behavior)")
+        // Cleanup old entries after decision
+        let now = Date().timeIntervalSince1970
+        permissionRequests = permissionRequests.filter { now - ($0.value["timestamp"] as? Double ?? 0) < 300 }
     }
 
     private func stateLightDict(_ state: String) -> [String: AnyCodable] {
@@ -257,6 +346,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     var lightServer: LightServer?
+    var permissionBubbleWindow: NSWindow?
+    var permissionBubbleId: String?
+    var permissionAlwaysCheck: NSButton?
+    var permissionToolName: String?
+    var permissionCommand: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 防止多开：已有实例时激活并退出
@@ -338,6 +432,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let port = UInt16(portStr) ?? 8866
         let server = LightServer()
         server.onLog = { [weak self] msg in DispatchQueue.main.async { self?.log(msg) } }
+        server.onPermissionRequest = { [weak self] entry in DispatchQueue.main.async { self?.showPermissionBubble(entry) } }
         server.start(port: port)
         lightServer = server
         checkServerReachability()
@@ -450,6 +545,125 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return img
     }
 
+    // MARK: - Permission Bubble
+    func showPermissionBubble(_ entry: [String: Any]) {
+        guard config.notifyOnPermission else { return }
+        guard let lightWindow = lightWindow else { return }
+        permissionBubbleWindow?.close()
+
+        let id = entry["id"] as? String ?? ""
+        let input = entry["input"] as? [String: Any] ?? [:]
+        let toolName = input["tool_name"] as? String ?? "unknown"
+        let toolInput = input["tool_input"] as? [String: Any] ?? [:]
+        let command = toolInput["command"] as? String ?? toolInput["file_path"] as? String ?? ""
+
+        // Switch to waiting state
+        permissionBubbleId = id
+        permissionToolName = toolName
+        permissionCommand = String(command.prefix(60))
+        let sessionId = input["session_id"] as? String ?? "default"
+        if let ls = lightServer {
+            ls.updateState(name: "waiting", message: "permission: \(toolName)", sessionId: sessionId)
+        }
+
+        let bubbleW: CGFloat = 280, bubbleH: CGFloat = 150
+        let tailW: CGFloat = 12
+        let wf = lightWindow.frame
+        let sf = NSScreen.main?.visibleFrame ?? NSScreen.screens[0].visibleFrame
+        let screenMidX = sf.midX
+        let winMidX = wf.midX
+        // 根据窗口在屏幕的哪一侧决定气泡方向
+        let onRight = winMidX > screenMidX
+        let bx: CGFloat, by: CGFloat
+        if onRight {
+            // 窗口在右半边，气泡在左侧，尾巴向右
+            by = wf.maxY - bubbleH
+            bx = wf.minX - bubbleW - tailW - 4
+        } else {
+            // 窗口在左半边，气泡在右侧，尾巴向左
+            by = wf.maxY - bubbleH
+            bx = wf.maxX + 4
+        }
+        let totalW = onRight ? bubbleW + tailW : tailW + bubbleW
+
+        let bubble = NSPanel(contentRect: NSRect(x: bx, y: by, width: totalW, height: bubbleH),
+                             styleMask: [.nonactivatingPanel, .fullSizeContentView],
+                             backing: .buffered, defer: false)
+        bubble.isFloatingPanel = true
+        bubble.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) + 1)
+        bubble.backgroundColor = .clear
+        bubble.isOpaque = false
+        bubble.hasShadow = true
+        bubble.isMovableByWindowBackground = false
+
+        // 聊天冒泡背景
+        let bubbleView = ChatBubbleView(frame: NSRect(x: 0, y: 0, width: totalW, height: bubbleH))
+        bubbleView.tailOnRight = onRight
+        bubble.contentView?.addSubview(bubbleView)
+
+        let contentX = onRight ? 14.0 : 12.0 + tailW
+        // Title
+        let title = NSTextField(frame: NSRect(x: contentX, y: bubbleH - 30, width: bubbleW - 28, height: 20))
+        title.isEditable = false; title.isBordered = false; title.backgroundColor = .clear
+        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = NSColor.white
+        title.stringValue = "\(toolName) 请求权限"
+        title.drawsBackground = false
+        bubbleView.addSubview(title)
+
+        // Command detail
+        let detail = NSTextField(frame: NSRect(x: contentX, y: bubbleH - 96, width: bubbleW - 28, height: 56))
+        detail.isEditable = false; detail.isBordered = false; detail.backgroundColor = .clear
+        detail.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        detail.textColor = NSColor(white: 0.6, alpha: 1.0)
+        detail.stringValue = String(command.prefix(200))
+        detail.lineBreakMode = .byCharWrapping
+        detail.cell?.wraps = true
+        detail.drawsBackground = false
+        bubbleView.addSubview(detail)
+
+        // 知道了按钮
+        let okBtn = NSButton(frame: NSRect(x: contentX, y: 20, width: bubbleW - 28, height: 28))
+        okBtn.bezelStyle = .rounded
+        let okAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor(white: 0.9, alpha: 1.0)]
+        okBtn.attributedTitle = NSAttributedString(string: "知道了", attributes: okAttrs)
+        okBtn.target = self
+        okBtn.action = #selector(okPermission)
+        bubbleView.addSubview(okBtn)
+
+        bubble.orderFront(nil)
+        permissionBubbleWindow = bubble
+    }
+
+    func dismissPermissionBubble() {
+        permissionBubbleWindow?.close()
+        permissionBubbleWindow = nil
+        permissionBubbleId = nil
+        permissionAlwaysCheck = nil
+        permissionToolName = nil
+        permissionCommand = nil
+    }
+
+    @objc func okPermission() {
+        dismissPermissionBubble()
+    }
+
+    @objc func denyPermission() {
+        guard let id = permissionBubbleId, !id.isEmpty else { return }
+        lightServer?.setPermissionDecision(id: id, behavior: "deny")
+        dismissPermissionBubble()
+    }
+
+    @objc func allowPermission() {
+        guard let id = permissionBubbleId, !id.isEmpty else { return }
+        var rule: [String: Any]? = nil
+        if permissionAlwaysCheck?.tag == 1 {
+            rule = ["toolName": permissionToolName ?? "", "ruleContent": permissionCommand ?? ""]
+        }
+        lightServer?.setPermissionDecision(id: id, behavior: "allow", addRule: rule)
+        dismissPermissionBubble()
+    }
+
     func buildLightWindow() {
         isRebuilding = true
         defer { isRebuilding = false }
@@ -515,6 +729,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         lightWindow.collectionBehavior = config.showOnFullscreen ? [.canJoinAllSpaces, .fullScreenAuxiliary] : []
         lightWindow.isMovableByWindowBackground = true
         lightWindow.isOpaque = false; lightWindow.hasShadow = true
+        lightWindow.animationBehavior = .none
         lightWindow.minSize = isEdgeBar ? NSSize(width: 10, height: 100) : NSSize(width: 60, height: 120)
         lightWindow.backgroundColor = .clear
 
@@ -628,9 +843,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let rightMenu = NSMenu()
         rightMenu.addItem(withTitle: "设置...", action: #selector(openSettings), keyEquivalent: "")
+        rightMenu.addItem(withTitle: "重置位置", action: #selector(resetPosition), keyEquivalent: "")
         rightMenu.addItem(NSMenuItem.separator())
         rightMenu.addItem(withTitle: "退出", action: #selector(quitApp), keyEquivalent: "")
         view.menu = rightMenu
+        // 子视图也设置菜单，确保右键能响应
+        for sub in view.subviews { sub.menu = rightMenu }
 
         let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClick(_:)))
         doubleClick.numberOfClicksRequired = 2
@@ -744,6 +962,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func quitApp() { NSApp.terminate(nil) }
 
+    @objc func resetPosition() {
+        config.windowX = nil
+        config.windowY = nil
+        config.edgeBar = nil
+        config.save()
+        buildLightWindow()
+    }
+
     /// 从磁盘重新加载配置并重建窗口（保存后调用）
     func restartWithNewConfig() {
         let oldHorizontal = config.horizontal
@@ -814,6 +1040,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "working": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0),
                 "fixing": NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0),
                 "error": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0),
+                "waiting": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0),
             ]
             redView.lampColor = miniColors[state] ?? miniColors["idle"]!
             redView.isOn = true
@@ -856,6 +1083,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let fast = sin(Double(animPhase) * .pi * 4) > 0
                 redView.isOn = fast; redView.brightness = 1.0
                 redView.mascotState = "error"
+                yellowView.isOn = false; yellowView.mascotState = ""
+                greenView.isOn = false; greenView.mascotState = ""
+
+            case "waiting":
+                let fast = sin(Double(animPhase) * .pi * 4) > 0
+                redView.isOn = fast; redView.brightness = 1.0
                 yellowView.isOn = false; yellowView.mascotState = ""
                 greenView.isOn = false; greenView.mascotState = ""
 
@@ -1036,6 +1269,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var blinkSlider: NSSlider!; var blinkLabel: NSTextField!
     var autoLaunchCheck: NSButton!
     var notifyCheck: NSButton!
+    var permNotifyCheck: NSButton!
     var fullscreenCheck: NSButton!
     var floatingCheck: NSButton!
     var mascotSelect: NSPopUpButton!
@@ -1290,6 +1524,11 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         notifyCheck.state = c.notifyOnDone ? .on : .off
         view.addSubview(notifyCheck); y -= 28
 
+        permNotifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
+        permNotifyCheck.setButtonType(.switch); permNotifyCheck.title = "权限请求弹窗确认"
+        permNotifyCheck.state = c.notifyOnPermission ? .on : .off
+        view.addSubview(permNotifyCheck); y -= 28
+
         fullscreenCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         fullscreenCheck.setButtonType(.switch); fullscreenCheck.title = "全屏应用上层显示"
         fullscreenCheck.state = c.showOnFullscreen ? .on : .off
@@ -1371,16 +1610,12 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         view.addSubview(testTitle); y -= 30
 
         // 5 个测试按钮 + 1 个恢复按钮，两行排列
-        let testButtons: [(String, String, NSColor)] = [
-            ("🟢 空闲", "idle", NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)),
-            ("🟡 思考", "thinking", NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0)),
-            ("🔴 执行", "working", NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)),
-            ("🟡 修复", "fixing", NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0)),
-            ("🔴 警告", "error", NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0)),
+        let testButtons: [(String, String)] = [
+            ("空闲", "idle"), ("思考", "thinking"), ("执行", "working"), ("修复", "fixing"), ("错误", "error"),
         ]
-        let btnW: CGFloat = 60, btnH: CGFloat = 28, gap: CGFloat = 6
+        let btnW: CGFloat = 56, btnH: CGFloat = 26, gap: CGFloat = 4
         let startX: CGFloat = 16
-        for (i, (label, state, _)) in testButtons.enumerated() {
+        for (i, (label, state)) in testButtons.enumerated() {
             let btn = NSButton(frame: NSRect(x: startX + CGFloat(i) * (btnW + gap), y: y, width: btnW, height: btnH))
             btn.title = label; btn.bezelStyle = .rounded; btn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
             btn.tag = ["idle": 0, "thinking": 1, "working": 2, "fixing": 3, "error": 4][state] ?? 0
@@ -1390,9 +1625,17 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         // 恢复按钮
         let resetBtn = NSButton(frame: NSRect(x: startX + 5 * (btnW + gap), y: y, width: btnW, height: btnH))
-        resetBtn.title = "⏹ 恢复"; resetBtn.bezelStyle = .rounded; resetBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        resetBtn.title = "恢复"; resetBtn.bezelStyle = .rounded; resetBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         resetBtn.target = self; resetBtn.action = #selector(testLightReset(_:))
         view.addSubview(resetBtn)
+        y -= 32
+
+        // 权限请求测试按钮
+        let permTestBtn = NSButton(frame: NSRect(x: 16, y: y, width: 120, height: btnH))
+        permTestBtn.title = "模拟权限请求"; permTestBtn.bezelStyle = .rounded
+        permTestBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        permTestBtn.target = self; permTestBtn.action = #selector(testPermissionRequest(_:))
+        view.addSubview(permTestBtn)
         y -= 34
 
         // 测试状态标签
@@ -1451,6 +1694,22 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         }.resume()
+    }
+
+    @objc func testPermissionRequest(_ sender: NSButton) {
+        let id = "test-\(Int(Date().timeIntervalSince1970 * 1000))"
+        let testEntry: [String: Any] = [
+            "id": id,
+            "input": [
+                "tool_name": "Bash",
+                "tool_input": ["command": "npm run build --production"],
+                "session_id": "test-session"
+            ],
+            "status": "pending",
+            "timestamp": Date().timeIntervalSince1970
+        ]
+        appDelegate.lightServer?.storeTestPermission(id: id, entry: testEntry)
+        appDelegate.showPermissionBubble(testEntry)
     }
 
     // ============================================================
@@ -1597,11 +1856,16 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func generateHooks(tool: String, port: String) -> [String: Any] {
         let toolName = tool == "claude" ? "$CLAUDE_TOOL_NAME" : (tool == "cursor" ? "$CURSOR_TOOL_NAME" : "")
         let sessionId = tool == "claude" ? "$CLAUDE_SESSION_ID" : (tool == "cursor" ? "$CURSOR_SESSION_ID" : "codex")
-        return [
+        var hooks: [String: Any] = [
             "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing \(toolName)\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
             "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
             "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
         ]
+        if appDelegate.config.notifyOnPermission {
+            let permCmd = "curl -s -X POST http://127.0.0.1:\(port)/api/permission -d \"$(cat)\" -H 'Content-Type: application/json' > /dev/null 2>&1 || true"
+            hooks["PermissionRequest"] = [["matcher": "", "hooks": [["type": "command", "command": permCmd]]]]
+        }
+        return hooks
     }
 
     func generateHooksJSON(hooks: [String: Any]) -> String {
@@ -1873,6 +2137,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.windowSize = sizeSlider.doubleValue
         c.autoLaunch = autoLaunchCheck.state == .on
         c.notifyOnDone = notifyCheck.state == .on
+        c.notifyOnPermission = permNotifyCheck.state == .on
         c.showOnFullscreen = fullscreenCheck.state == .on
         c.horizontal = horizontalCheck.state == .on
         let modes = ["vertical", "horizontal", "mini", "edgebar"]
@@ -1936,6 +2201,64 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) { appDelegate.settingsWindowController = nil }
+}
+
+// ============================================================
+// ChatBubbleView — 聊天气泡样式
+// ============================================================
+
+class ChatBubbleView: NSView {
+    var tailOnRight = true  // true=尾巴在右侧指向右，false=尾巴在左侧指向左
+
+    override func draw(_ dirtyRect: NSRect) {
+        let w = bounds.width
+        let h = bounds.height
+        let tailW: CGFloat = 12
+        let bodyW = w - tailW
+        let r: CGFloat = 14
+        let tailY = h * 0.7  // 尾巴垂直位置
+
+        let path = NSBezierPath()
+        if tailOnRight {
+            // 尾巴在右侧，指向右边的红绿灯
+            // 从左上角顺时针
+            path.move(to: NSPoint(x: r, y: h))
+            path.curve(to: NSPoint(x: 0, y: h - r), controlPoint1: NSPoint(x: 0, y: h), controlPoint2: NSPoint(x: 0, y: h - r))
+            path.line(to: NSPoint(x: 0, y: r))
+            path.curve(to: NSPoint(x: r, y: 0), controlPoint1: NSPoint(x: 0, y: 0), controlPoint2: NSPoint(x: r, y: 0))
+            path.line(to: NSPoint(x: bodyW - r, y: 0))
+            path.curve(to: NSPoint(x: bodyW, y: r), controlPoint1: NSPoint(x: bodyW, y: 0), controlPoint2: NSPoint(x: bodyW, y: r))
+            // 右边 + 尾巴
+            path.line(to: NSPoint(x: bodyW, y: tailY - tailW / 2))
+            path.line(to: NSPoint(x: w, y: tailY))  // 尾巴尖端
+            path.line(to: NSPoint(x: bodyW, y: tailY + tailW / 2))
+            path.line(to: NSPoint(x: bodyW, y: h - r))
+            path.curve(to: NSPoint(x: bodyW - r, y: h), controlPoint1: NSPoint(x: bodyW, y: h), controlPoint2: NSPoint(x: bodyW - r, y: h))
+        } else {
+            // 尾巴在左侧，指向左边的红绿灯
+            // 从右上角逆时针
+            path.move(to: NSPoint(x: w - r, y: h))
+            path.curve(to: NSPoint(x: w, y: h - r), controlPoint1: NSPoint(x: w, y: h), controlPoint2: NSPoint(x: w, y: h - r))
+            path.line(to: NSPoint(x: w, y: r))
+            path.curve(to: NSPoint(x: w - r, y: 0), controlPoint1: NSPoint(x: w, y: 0), controlPoint2: NSPoint(x: w - r, y: 0))
+            path.line(to: NSPoint(x: tailW + r, y: 0))
+            path.curve(to: NSPoint(x: tailW, y: r), controlPoint1: NSPoint(x: tailW, y: 0), controlPoint2: NSPoint(x: tailW, y: r))
+            // 左边 + 尾巴
+            path.line(to: NSPoint(x: tailW, y: tailY - tailW / 2))
+            path.line(to: NSPoint(x: 0, y: tailY))  // 尾巴尖端
+            path.line(to: NSPoint(x: tailW, y: tailY + tailW / 2))
+            path.line(to: NSPoint(x: tailW, y: h - r))
+            path.curve(to: NSPoint(x: tailW + r, y: h), controlPoint1: NSPoint(x: tailW, y: h), controlPoint2: NSPoint(x: tailW + r, y: h))
+        }
+        path.close()
+
+        NSColor(white: 0.15, alpha: 0.95).setFill()
+        path.fill()
+
+        NSColor(white: 0.25, alpha: 0.6).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
 }
 
 // ============================================================
