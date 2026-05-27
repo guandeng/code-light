@@ -14,6 +14,7 @@ build: ## 编译 Swift 并更新 App Bundle
 		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
 		-o $(BINARY) $(SWIFT_SRC)
 	-[ -f $(SERVER_SRC) ] && cp $(SERVER_SRC) $(RESOURCES)/light-server.py || true
+	codesign --force --deep --sign - $(APP_BUNDLE)
 	@echo "✅ 编译完成: $(APP_BUNDLE)"
 
 clean: ## 清理编译产物

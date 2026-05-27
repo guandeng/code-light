@@ -471,8 +471,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             lightW = initSize + 40
             lightH = initSize * 3 + 14 * 2 + 18 * 2 + (config.showStatusText ? 32 : 0)
         }
-        let screen = NSScreen.main!.frame
-        let screenVisible = NSScreen.main!.visibleFrame
+        let targetScreen: NSScreen
+        if let wx = config.windowX {
+            targetScreen = NSScreen.screens.first { wx >= $0.frame.minX && wx <= $0.frame.maxX } ?? NSScreen.main!
+        } else {
+            targetScreen = NSScreen.main!
+        }
+        let screen = targetScreen.frame
         let defaultX: CGFloat, defaultY: CGFloat
         if isEdgeBar {
             if config.edgeBar == "left" {
@@ -642,9 +647,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.config.windowY = Double(w.frame.origin.y)
                 return
             }
-            guard let screen = NSScreen.main else { return }
-            let sf = screen.frame
             let wf = w.frame
+            let midX = wf.midX
+            let screen = NSScreen.screens.first { midX >= $0.frame.minX && midX <= $0.frame.maxX } ?? NSScreen.main
+            guard let sf = screen?.frame else { return }
             let snap: CGFloat = 20
 
             var newEdgeBar: String? = self.config.edgeBar
@@ -683,9 +689,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return event }
             if self.isDragging {
                 self.isDragging = false
-                guard let w = self.lightWindow, let screen = NSScreen.main else { return event }
-                let sf = screen.frame
+                guard let w = self.lightWindow else { return event }
                 let wf = w.frame
+                let midX = wf.midX
+                let screen = NSScreen.screens.first { midX >= $0.frame.minX && midX <= $0.frame.maxX } ?? NSScreen.main
+                guard let sf = screen?.frame else { return event }
                 let snap: CGFloat = 20
                 var newEdgeBar: String? = self.config.edgeBar
                 if wf.minX - sf.minX < snap {
