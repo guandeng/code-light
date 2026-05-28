@@ -368,6 +368,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             self.log("[通知] UN权限: \(granted), err: \(String(describing: error))")
         }
+        buildAppMainMenu()
         startServer()
         buildMenuBar()
         buildLightWindow()
@@ -384,6 +385,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             WeatherManager.shared.startPolling()
         }
+
+        // 全局快捷键
+        HotkeyManager.shared.onToggleWindow = { [weak self] in self?.toggleWindow() }
+        HotkeyManager.shared.onCycleMode = { [weak self] in self?.handleDoubleClick(NSClickGestureRecognizer()) }
+        HotkeyManager.shared.start()
+
         log("[启动] OK")
         checkHookSetup()
     }
@@ -460,6 +467,71 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         log("[退出] 服务已停止")
     }
 
+    func buildAppMainMenu() {
+        let mainMenu = NSMenu()
+        let appName = "CodeLight"
+
+        // —— CodeLight 应用菜单 ——
+        let appMenu = NSMenu(title: appName)
+        appMenu.addItem(withTitle: "关于 \(appName)", action: #selector(showAbout), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "偏好设置...", action: #selector(openSettings), keyEquivalent: ",")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "隐藏 \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthersItem = NSMenuItem(title: "隐藏其他", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+        appMenu.addItem(withTitle: "显示全部", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "退出 \(appName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appMenuItem = NSMenuItem(); appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        // —— 文件菜单 ——
+        let fileMenu = NSMenu(title: "文件")
+        fileMenu.addItem(withTitle: "重置窗口位置", action: #selector(resetWindowPosition), keyEquivalent: "r")
+        fileMenu.addItem(NSMenuItem.separator())
+        fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let fileMenuItem = NSMenuItem(); fileMenuItem.submenu = fileMenu
+        mainMenu.addItem(fileMenuItem)
+
+        // —— 视图菜单 ——
+        let viewMenu = NSMenu(title: "视图")
+        viewMenu.addItem(withTitle: "显示/隐藏灯", action: #selector(toggleWindow), keyEquivalent: "t")
+        viewMenu.addItem(withTitle: "切换显示模式", action: #selector(handleDoubleClick(_:)), keyEquivalent: "d")
+        let viewMenuItem = NSMenuItem(); viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
+
+        // —— 窗口菜单 ——
+        let windowMenu = NSMenu(title: "窗口")
+        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        let windowMenuItem = NSMenuItem(); windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+        NSApp.windowsMenu = windowMenu
+
+        // —— 帮助菜单 ——
+        let helpMenu = NSMenu(title: "帮助")
+        helpMenu.addItem(withTitle: "\(appName) 帮助", action: #selector(openGitHub), keyEquivalent: "")
+        helpMenu.addItem(withTitle: "检查更新...", action: #selector(menuCheckForUpdate), keyEquivalent: "")
+        let helpMenuItem = NSMenuItem(); helpMenuItem.submenu = helpMenu
+        mainMenu.addItem(helpMenuItem)
+        NSApp.helpMenu = helpMenu
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    @objc func showAbout() {
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let icon = drawMenuIcon(state: "idle")
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "CodeLight",
+            .applicationIcon: icon,
+            .applicationVersion: "版本 \(ver)",
+            .version: ver,
+        ])
+    }
+
     func buildMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
@@ -469,6 +541,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let menu = NSMenu()
 
+        // 应用名称 + 版本（不可点击）
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let titleItem = NSMenuItem(title: "CodeLight v\(ver)", action: nil, keyEquivalent: "")
+        titleItem.isEnabled = false
+        menu.addItem(titleItem)
+
         // 状态标题（不可点击）
         let stateItem = NSMenuItem(title: "● 空闲", action: nil, keyEquivalent: "")
         stateItem.isEnabled = false
@@ -477,8 +555,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(withTitle: "显示/隐藏", action: #selector(toggleWindow), keyEquivalent: "w")
         menu.addItem(withTitle: "设置...", action: #selector(openSettings), keyEquivalent: ",")
+
+        // 显示样式子菜单
+        let modeMenu = NSMenu(title: "显示样式")
+        let modes = [("vertical", "竖向"), ("horizontal", "横向"), ("mini", "迷你"), ("edgebar", "边缘栏")]
+        for (idx, (key, label)) in modes.enumerated() {
+            let item = NSMenuItem(title: label, action: #selector(switchDisplayMode(_:)), keyEquivalent: "")
+            item.tag = idx
+            if config.displayMode == key { item.state = .on }
+            modeMenu.addItem(item)
+        }
+        let modeItem = NSMenuItem(title: "显示样式", action: nil, keyEquivalent: "")
+        modeItem.submenu = modeMenu
+        menu.addItem(modeItem)
+
+        menu.addItem(withTitle: "重置窗口位置", action: #selector(resetWindowPosition), keyEquivalent: "r")
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        menu.addItem(withTitle: "检查更新...", action: #selector(menuCheckForUpdate), keyEquivalent: "u")
+        menu.addItem(withTitle: "GitHub", action: #selector(openGitHub), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "退出 CodeLight", action: #selector(quitApp), keyEquivalent: "q")
         statusItem?.menu = menu
     }
 
@@ -900,7 +996,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let m = mouseDownMonitor { NSEvent.removeMonitor(m) }
         if let m = mouseUpMonitor { NSEvent.removeMonitor(m) }
         mouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            if event.window === self?.lightWindow { self?.isDragging = true }
+            if event.window === self?.lightWindow {
+                self?.isDragging = true
+                NSApp.activate(ignoringOtherApps: true)
+            }
             return event
         }
         mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
@@ -961,6 +1060,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindowController?.window?.center()
     }
     @objc func quitApp() { NSApp.terminate(nil) }
+
+    @objc func resetWindowPosition() { resetPosition() }
+
+    @objc func switchDisplayMode(_ sender: NSMenuItem) {
+        let modes = ["vertical", "horizontal", "mini", "edgebar"]
+        guard sender.tag < modes.count else { return }
+        config.displayMode = modes[sender.tag]
+        config.horizontal = (config.displayMode == "horizontal")
+        config.edgeBar = (config.displayMode == "edgebar") ? (config.edgeBar ?? "right") : nil
+        config.save()
+        rebuildWithCurrentConfig()
+        // 更新子菜单勾选状态
+        if let menu = (statusItem?.menu?.items.first { $0.submenu?.title == "显示样式" })?.submenu {
+            for item in menu.items { item.state = (item.tag == sender.tag) ? .on : .off }
+        }
+    }
+
+    @objc func menuCheckForUpdate() {
+        let currentVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        let task = Process()
+        task.launchPath = "/usr/bin/env"
+        task.arguments = ["gh", "api", "repos/guandeng/code-light/releases/latest", "--jq", ".tag_name"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+        task.launch()
+        task.waitUntilExit()
+        guard task.terminationStatus == 0 else {
+            let alert = NSAlert(); alert.messageText = "检查失败"; alert.informativeText = "请确认已安装 gh 并登录"; alert.runModal()
+            return
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let tagName = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let latestVer = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "v"))
+        if latestVer.compare(currentVer, options: .numeric) == .orderedDescending {
+            let alert = NSAlert(); alert.messageText = "发现新版本 \(tagName)"; alert.informativeText = "当前版本 v\(currentVer)"
+            alert.addButton(withTitle: "去下载"); alert.addButton(withTitle: "取消")
+            if alert.runModal() == .alertFirstButtonReturn {
+                if let url = URL(string: "https://github.com/guandeng/code-light/releases/latest") { NSWorkspace.shared.open(url) }
+            }
+        } else {
+            let alert = NSAlert(); alert.messageText = "当前已是最新版本"; alert.informativeText = "v\(currentVer)"; alert.runModal()
+        }
+    }
+
+    @objc func openGitHub() {
+        if let url = URL(string: "https://github.com/guandeng/code-light") { NSWorkspace.shared.open(url) }
+    }
 
     @objc func resetPosition() {
         config.windowX = nil
@@ -1172,6 +1319,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     UNUserNotificationCenter.current().add(req) { error in
                         self.log("[通知] UN结果: \(error?.localizedDescription ?? "ok")")
                     }
+                    // 自定义提示音
+                    let soundName = self.config.completionSound
+                    if soundName != "none", let sound = NSSound(named: NSSound.Name(soundName)) {
+                        sound.play()
+                    }
                 }
                 let s = STATES[sn] ?? STATES["idle"]!
                 if self.config.displayMode != "mini" {
@@ -1269,6 +1421,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var blinkSlider: NSSlider!; var blinkLabel: NSTextField!
     var autoLaunchCheck: NSButton!
     var notifyCheck: NSButton!
+    var soundSelect: NSPopUpButton!
     var permNotifyCheck: NSButton!
     var fullscreenCheck: NSButton!
     var floatingCheck: NSButton!
@@ -1523,6 +1676,15 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         notifyCheck.setButtonType(.switch); notifyCheck.title = "任务完成时发送通知"
         notifyCheck.state = c.notifyOnDone ? .on : .off
         view.addSubview(notifyCheck); y -= 28
+
+        let soundLabel = NSTextField(labelWithString: "完成提示音:")
+        soundLabel.frame = NSRect(x: rx, y: y + 4, width: 80, height: 18)
+        view.addSubview(soundLabel)
+        let sounds = ["Glass", "Hero", "Ping", "Pop", "Purr", "Tink", "default", "none"]
+        soundSelect = NSPopUpButton(frame: NSRect(x: rx + 88, y: y, width: 150, height: 26))
+        soundSelect.addItems(withTitles: sounds)
+        if let idx = sounds.firstIndex(of: c.completionSound) { soundSelect.selectItem(at: idx) }
+        view.addSubview(soundLabel); view.addSubview(soundSelect); y -= 32
 
         permNotifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         permNotifyCheck.setButtonType(.switch); permNotifyCheck.title = "权限请求弹窗确认"
@@ -2138,6 +2300,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.autoLaunch = autoLaunchCheck.state == .on
         c.notifyOnDone = notifyCheck.state == .on
         c.notifyOnPermission = permNotifyCheck.state == .on
+        c.completionSound = soundSelect.titleOfSelectedItem ?? "Glass"
         c.showOnFullscreen = fullscreenCheck.state == .on
         c.horizontal = horizontalCheck.state == .on
         let modes = ["vertical", "horizontal", "mini", "edgebar"]

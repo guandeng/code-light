@@ -14,6 +14,7 @@ struct AppConfig {
     var showInDock = true
     var isFloating = true
     var notifyOnDone = true
+    var completionSound: String = "Glass"  // 系统音效名: Glass, Hero, Ping, Pop, Purr, Tink, default, none
     var showOnFullscreen = true
     var horizontal = false
     var displayMode: String = "vertical"  // "vertical" | "horizontal" | "mini"
@@ -43,6 +44,7 @@ struct AppConfig {
         if ud.object(forKey: "isFloating") != nil { c.isFloating = ud.bool(forKey: "isFloating") }
         if ud.object(forKey: "notifyOnDone") != nil { c.notifyOnDone = ud.bool(forKey: "notifyOnDone") }
         if ud.object(forKey: "showOnFullscreen") != nil { c.showOnFullscreen = ud.bool(forKey: "showOnFullscreen") }
+        if let v = ud.string(forKey: "completionSound") { c.completionSound = v }
         if ud.object(forKey: "horizontal") != nil { c.horizontal = ud.bool(forKey: "horizontal") }
         if let v = ud.string(forKey: "displayMode") { c.displayMode = v }
         else if c.horizontal { c.displayMode = "horizontal" }
@@ -72,6 +74,7 @@ struct AppConfig {
         ud.set(showInDock, forKey: "showInDock")
         ud.set(isFloating, forKey: "isFloating")
         ud.set(notifyOnDone, forKey: "notifyOnDone")
+        ud.set(completionSound, forKey: "completionSound")
         ud.set(showOnFullscreen, forKey: "showOnFullscreen")
         ud.set(horizontal, forKey: "horizontal")
         ud.set(displayMode, forKey: "displayMode")

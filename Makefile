@@ -2,12 +2,13 @@ VERSION ?= 1.0.0
 APP_NAME = CodeLight
 APP_BUNDLE = $(APP_NAME).app
 ZIP_FILE = $(APP_NAME)-v$(VERSION).zip
-SWIFT_SRC = main.swift Config.swift Weather.swift UI.swift CodeLight.swift
+SWIFT_SRC = main.swift Config.swift HotkeyManager.swift Weather.swift UI.swift CodeLight.swift
+CLI_SRC = codelight-cli.swift
 SERVER_SRC = light-server.py
 BINARY = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 RESOURCES = $(APP_BUNDLE)/Contents/Resources
 
-.PHONY: build clean package release
+.PHONY: build cli clean package release
 
 build: ## 编译 Swift 并更新 App Bundle
 	swiftc -O -target arm64-apple-macosx13.0 \
@@ -17,8 +18,12 @@ build: ## 编译 Swift 并更新 App Bundle
 	codesign --force --deep --sign - $(APP_BUNDLE)
 	@echo "✅ 编译完成: $(APP_BUNDLE)"
 
+cli: ## 编译 CLI 工具
+	swiftc -O -o codelight $(CLI_SRC)
+	@echo "✅ CLI 编译完成: codelight"
+
 clean: ## 清理编译产物
-	rm -f $(BINARY)
+	rm -f $(BINARY) codelight
 	@echo "🧹 已清理"
 
 package: build ## 打包 zip
