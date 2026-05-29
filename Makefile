@@ -9,6 +9,7 @@ BINARY = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 RESOURCES = $(APP_BUNDLE)/Contents/Resources
 
 .PHONY: build cli clean package release
+.PHONY: build clean package release test test-unit test-integration
 
 build: ## 编译 Swift 并更新 App Bundle
 	swiftc -O -target arm64-apple-macosx13.0 \
@@ -37,6 +38,14 @@ release: package ## 编译 + 打包 + 创建 GitHub Release（用法: make relea
 		--notes "$(shell cat release-notes.md 2>/dev/null || echo 'See README for details.')"
 	@echo "🚀 已发布 v$(VERSION) 到 GitHub Releases"
 	rm -f $(ZIP_FILE)
+
+test: test-unit test-integration ## 运行所有测试
+
+test-unit: ## 运行单元测试（纯逻辑，不需要运行应用）
+	swift -target arm64-apple-macosx13.0 Tests/ConfigTests.swift
+
+test-integration: ## 运行集成测试（需要 CodeLight 正在运行）
+	bash Tests/run_tests.sh
 
 help: ## 显示帮助
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'

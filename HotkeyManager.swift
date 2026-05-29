@@ -27,6 +27,21 @@ class HotkeyManager {
         // App 内部的按键也需要监听
         let localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
             self?.handleKeyEvent(event)
+            // Ctrl+C/V/X/A/Z 映射为 Cmd，兼容用户习惯
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if mods.contains(.control) && !mods.contains(.command) {
+                let keyChar = event.charactersIgnoringModifiers?.lowercased()
+                if let k = keyChar, ["c", "v", "x", "a", "z"].contains(k) {
+                    let newMods: NSEvent.ModifierFlags = mods.subtracting(.control).union(.command)
+                    if let cgEvent = event.cgEvent {
+                        cgEvent.flags = cgEvent.flags.subtracting(.maskControl).union(.maskCommand)
+                        if let newEvent = NSEvent(cgEvent: cgEvent) {
+                            NSApp.sendEvent(newEvent)
+                            return nil
+                        }
+                    }
+                }
+            }
             return event
         }
         globalMonitors.append(localMonitor)

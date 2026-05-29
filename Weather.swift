@@ -298,10 +298,10 @@ class WeatherView: NSView {
             ]
             addSnow()
         case .thunderstorm:
-            let dark = dayBrightness * 0.5
+            let dark = 0.3 + dayBrightness * 0.4
             grad.colors = [
-                NSColor(white: 0.12 * dark, alpha: bAlpha).cgColor,
-                NSColor(white: 0.08 * dark, alpha: bAlpha - 0.1).cgColor,
+                NSColor(white: 0.15 * dark, alpha: bAlpha * 0.7).cgColor,
+                NSColor(white: 0.10 * dark, alpha: bAlpha * 0.6).cgColor,
             ]
             addRain()
             startLightning()

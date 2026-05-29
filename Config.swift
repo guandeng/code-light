@@ -23,13 +23,14 @@ struct AppConfig {
     var windowX: Double?
     var windowY: Double?
     var edgeBar: String?  // "left" | "right" | nil
-    var mascotType: String = "cow"  // "cow" | "cat" | "robot"
+    var mascotType: String = "cow"  // "cow" | "cat" | "robot" | "horse" | "chicken"
     var theme: String = "dark"     // "dark" | "light" | "custom"
     var customColor: String = "#1C1E22"
     var weatherThemeEnabled: Bool = false
     var weatherCity: String = "深圳"
     var hookSetupDismissed = false
     var notifyOnPermission: Bool = true
+    var statsWebhook: String = ""  // unused, kept for config compatibility
 
     static func load() -> AppConfig {
         let ud = UserDefaults.standard
@@ -60,6 +61,7 @@ struct AppConfig {
         if let v = ud.string(forKey: "weatherCity") { c.weatherCity = v }
         c.hookSetupDismissed = ud.bool(forKey: "hookSetupDismissed")
         if ud.object(forKey: "notifyOnPermission") != nil { c.notifyOnPermission = ud.bool(forKey: "notifyOnPermission") }
+        if let v = ud.string(forKey: "statsWebhook") { c.statsWebhook = v }
         return c
     }
 
@@ -90,6 +92,7 @@ struct AppConfig {
         ud.set(weatherCity, forKey: "weatherCity")
         ud.set(hookSetupDismissed, forKey: "hookSetupDismissed")
         ud.set(notifyOnPermission, forKey: "notifyOnPermission")
+        ud.set(statsWebhook, forKey: "statsWebhook")
     }
 }
 

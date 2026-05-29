@@ -15,6 +15,24 @@
    git push origin main
    ```
 
+## Push 前检查（每次必须执行）
+
+每次 `git push` 前必须完成以下检查：
+
+1. **安全审查** — 检查变更中是否包含：
+   - 硬编码的密钥/token/密码/API key
+   - 敏感文件（.env、credentials、私钥）
+   - 内部 URL 或邮箱泄漏
+   - 命令注入风险（未过滤的用户输入拼入 shell 命令）
+
+2. **Code Review** — 审查变更代码：
+   - 是否有明显的逻辑错误或边界问题
+   - 是否引入了不安全的 API 调用
+   - 是否有未使用的 debug 代码或临时代码
+   - 改动是否符合最小化原则（不多改）
+
+3. **编译验证** — `make build` 必须通过，无新增 error
+
 3. **发版命令**
    ```bash
    make release VERSION=X.Y.Z
@@ -30,7 +48,7 @@
 - `main.swift` — 入口，创建 AppDelegate 和 status bar
 - `CodeLight.swift` — 核心：LightServer (NWListener HTTP)、灯窗口管理、设置面板、Hook 生成、权限气泡
 - `Config.swift` — AppConfig (UserDefaults 持久化)、状态定义 STATES、城市列表
-- `UI.swift` — 纯绘制：ShellView、RealTrafficLightView、吉祥物绘制 (cow/cat/robot/horse)
+- `UI.swift` — 纯绘制：ShellView、RealTrafficLightView、吉祥物绘制 (cow/cat/robot/horse/chicken)
 - `Weather.swift` — Open-Meteo 天气 API、WeatherView 渐变背景
 - `Makefile` — build/package/release 自动化
 

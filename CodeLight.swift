@@ -23,6 +23,7 @@ class LightServer {
     private let deadTimeout: TimeInterval = 3600
     var onLog: ((String) -> Void)?
     var onPermissionRequest: (([String: Any]) -> Void)?
+    var statsWebhook: String = ""  // unused, kept for config compatibility
 
     private struct SessionEntry {
         var state: String; var message: String; var timestamp: Date
@@ -353,6 +354,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var permissionCommand: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 添加 Edit 菜单支持文本编辑快捷键（Cmd+C/V/X/A/Z）
+        let mainMenu = NSMenu()
+        let appMenu = NSMenuItem()
+        mainMenu.addItem(appMenu)
+        let appSubMenu = NSMenu(title: "CodeLight")
+        appSubMenu.addItem(withTitle: "关于 CodeLight", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appSubMenu.addItem(NSMenuItem.separator())
+        appSubMenu.addItem(withTitle: "隐藏 CodeLight", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appSubMenu.addItem(NSMenuItem.separator())
+        appSubMenu.addItem(withTitle: "退出 CodeLight", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.submenu = appSubMenu
+        let editMenu = NSMenuItem()
+        mainMenu.addItem(editMenu)
+        let editSubMenu = NSMenu(title: "编辑")
+        editSubMenu.addItem(withTitle: "撤销", action: Selector("undo:"), keyEquivalent: "z")
+        editSubMenu.addItem(withTitle: "重做", action: Selector("redo:"), keyEquivalent: "Z")
+        editSubMenu.addItem(NSMenuItem.separator())
+        editSubMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editSubMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editSubMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editSubMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.submenu = editSubMenu
+        NSApplication.shared.mainMenu = mainMenu
+
         // 防止多开：已有实例时激活并退出
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.codelight.app")
         if running.count > 1 {
@@ -864,6 +889,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Mini 模式：单圆形，颜色随状态变化
             redView = RealTrafficLightView()
             redView.lampColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
+            redView.mascotType = config.mascotType
             redView.frame = view.bounds
             view.addSubview(redView)
             yellowView = RealTrafficLightView(); yellowView.frame = NSRect.zero
@@ -939,7 +965,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let rightMenu = NSMenu()
         rightMenu.addItem(withTitle: "设置...", action: #selector(openSettings), keyEquivalent: "")
-        rightMenu.addItem(withTitle: "重置位置", action: #selector(resetPosition), keyEquivalent: "")
         rightMenu.addItem(NSMenuItem.separator())
         rightMenu.addItem(withTitle: "退出", action: #selector(quitApp), keyEquivalent: "")
         view.menu = rightMenu
@@ -1042,6 +1067,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         animTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in self.animateLight() }
     }
 
+
     @objc func toggleWindow() {
         if lightWindow.isVisible { lightWindow.orderOut(nil) } else { lightWindow.makeKeyAndOrderFront(nil) }
     }
@@ -1056,8 +1082,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func openSettings() {
         if settingsWindowController == nil { settingsWindowController = SettingsWindowController(appDelegate: self) }
-        settingsWindowController?.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
+        settingsWindowController?.syncFromConfig()
         settingsWindowController?.window?.center()
+        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
     @objc func quitApp() { NSApp.terminate(nil) }
 
@@ -1411,6 +1439,11 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
 // SettingsWindowController
 // ============================================================
 
+class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 class SettingsWindowController: NSWindowController, NSWindowDelegate {
     let appDelegate: AppDelegate
     var serverField: NSTextField!
@@ -1430,11 +1463,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var displayModeSegment: NSSegmentedControl!
     var showStatusCheck: NSButton!
     var sizeSlider: NSSlider!; var sizeLabel: NSTextField!
-    var containerView: NSView!
-    var settingsContainer: NSView!
     var rulesContainer: NSView!
     var hookContainer: NSView!
-    var segmentedControl: NSSegmentedControl!
     var claudeCodeCheck: NSButton!
     var codexCheck: NSButton!
     var cursorCheck: NSButton!
@@ -1444,67 +1474,167 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var weatherCheck: NSButton!
     var weatherStatusLabel: NSTextField!
     var citySelect: NSPopUpButton!
+    // Sidebar navigation
+    var sidebarButtons: [NSButton] = []
+    var containers: [NSView] = []
+    var generalContainer: NSView!
+    var appearanceContainer: NSView!
+    var behaviorContainer: NSView!
+    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "💡 灯效规则", "🔗 配置 Hook"]
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
-        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 620),
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 620),
                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "CodeLight 设置"; win.isReleasedWhenClosed = false
         super.init(window: win); win.delegate = self; buildUI()
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    @objc func switchTab(_ sender: NSSegmentedControl) {
-        settingsContainer.isHidden = sender.selectedSegment != 0
-        rulesContainer.isHidden = sender.selectedSegment != 1
-        hookContainer.isHidden = sender.selectedSegment != 2
+    func syncFromConfig() {
+        let c = appDelegate.config
+        let modeIdx = ["vertical": 0, "horizontal": 1, "mini": 2, "edgebar": 3][c.displayMode] ?? 0
+        displayModeSegment.selectedSegment = modeIdx
+        opacitySlider.doubleValue = c.opacity; opacityLabel.stringValue = "\(Int(c.opacity * 100))%"
+        pollSlider.doubleValue = c.pollInterval; pollLabel.stringValue = String(format: "%.1fs", c.pollInterval)
+        blinkSlider.doubleValue = c.blinkSpeed; blinkLabel.stringValue = String(format: "%.1fs", c.blinkSpeed)
+        sizeSlider.doubleValue = c.windowSize; sizeLabel.stringValue = "\(Int(c.windowSize))"
+        let port = c.serverURL.components(separatedBy: ":").last ?? "8866"
+        serverField.stringValue = port
+        autoLaunchCheck.state = c.autoLaunch ? .on : .off
+        notifyCheck.state = c.notifyOnDone ? .on : .off
+        permNotifyCheck.state = c.notifyOnPermission ? .on : .off
+        fullscreenCheck.state = c.showOnFullscreen ? .on : .off
+        floatingCheck.state = c.isFloating ? .on : .off
+        showStatusCheck.state = c.showStatusText ? .on : .off
+        mascotSelect.selectItem(at: ["cow": 0, "cat": 1, "robot": 2, "horse": 3, "chicken": 4][c.mascotType] ?? 0)
+        themeSelect.selectItem(at: ["dark": 0, "light": 1, "custom": 2][c.theme] ?? 0)
+        colorWell.color = NSColor(fromHex: c.customColor) ?? NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0)
+        colorWell.isHidden = c.theme != "custom"
+        weatherCheck.state = c.weatherThemeEnabled ? .on : .off
+        citySelect.selectItem(withTitle: c.weatherCity)
     }
 
     func buildUI() {
         guard let view = window?.contentView else { return }
         let c = appDelegate.config
-        let contentW: CGFloat = 380
-        let contentX: CGFloat = (420 - contentW) / 2
+        let sideW: CGFloat = 150
+        let contentW: CGFloat = 430
+        let contentH: CGFloat = 620
+        let bottomH: CGFloat = 50
+        let mainH = contentH - bottomH
 
-        // Segmented control — 顶部 tab 切换
-        segmentedControl = NSSegmentedControl(labels: ["设置", "灯效规则", "配置 Hook"], trackingMode: .selectOne, target: self, action: #selector(switchTab))
-        segmentedControl.frame = NSRect(x: contentX, y: 580, width: contentW, height: 24)
-        segmentedControl.selectedSegment = 0
-        view.addSubview(segmentedControl)
+        // --- Left Sidebar ---
+        let sidebarBg = NSView(frame: NSRect(x: 0, y: 0, width: sideW, height: contentH))
+        sidebarBg.wantsLayer = true
+        sidebarBg.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        view.addSubview(sidebarBg)
 
-        // 分隔线
-        let sepLine = NSView(frame: NSRect(x: contentX, y: 574, width: contentW, height: 1))
-        sepLine.wantsLayer = true; sepLine.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        view.addSubview(sepLine)
+        // Sidebar buttons (replacing NSTableView for reliable click handling)
+        let btnH: CGFloat = 36
+        let btnGap: CGFloat = 2
+        let startY: CGFloat = contentH - 16 - btnH  // top area, non-flipped coords
+        sidebarButtons = []
+        for (i, title) in sidebarItems.enumerated() {
+            let btn = NSButton(frame: NSRect(x: 0, y: startY - CGFloat(i) * (btnH + btnGap), width: sideW, height: btnH))
+            btn.title = "  \(title)"
+            btn.font = NSFont.systemFont(ofSize: 13, weight: i == 0 ? .semibold : .regular)
+            btn.alignment = .left
+            btn.isBordered = false
+            btn.wantsLayer = true
+            btn.layer?.cornerRadius = 4
+            btn.tag = i
+            btn.target = self
+            btn.action = #selector(sidebarButtonClicked(_:))
+            if i == 0 {
+                btn.contentTintColor = NSColor.controlAccentColor
+                btn.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.1).cgColor
+            }
+            sidebarBg.addSubview(btn)
+            sidebarButtons.append(btn)
+        }
 
-        // 内容容器 — 从分隔线往下到窗口底部
-        containerView = NSView(frame: NSRect(x: contentX, y: 0, width: contentW, height: 570))
-        view.addSubview(containerView)
+        let rightSep = NSView(frame: NSRect(x: sideW, y: 0, width: 1, height: contentH))
+        rightSep.wantsLayer = true; rightSep.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        view.addSubview(rightSep)
 
-        // === 设置页 ===
-        settingsContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: 570))
-        buildSettingsTab(settingsContainer, c)
-        containerView.addSubview(settingsContainer)
+        // --- Right Content Area ---
+        let contentArea = NSView(frame: NSRect(x: sideW + 1, y: 0, width: contentW, height: contentH))
+        view.addSubview(contentArea)
 
-        // === 灯效规则页 ===
-        rulesContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: 570))
-        buildRulesTab(rulesContainer)
-        rulesContainer.isHidden = true
-        containerView.addSubview(rulesContainer)
+        generalContainer = FlippedView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        appearanceContainer = FlippedView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        behaviorContainer = FlippedView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
 
-        // === Hook 配置页 ===
-        hookContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: 570))
-        buildHookTab(hookContainer)
-        hookContainer.isHidden = true
-        containerView.addSubview(hookContainer)
+        buildGeneralSection(generalContainer!, c)
+        buildAppearanceSection(appearanceContainer!, c)
+        buildBehaviorSection(behaviorContainer!, c)
+
+        let rulesDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 700))
+        let rulesContentHeight = buildRulesTab(rulesDoc)
+        rulesDoc.frame.size.height = max(rulesContentHeight, mainH)
+        let rulesScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        rulesScroll.documentView = rulesDoc
+        rulesScroll.hasVerticalScroller = true
+        rulesScroll.autohidesScrollers = true
+        rulesScroll.drawsBackground = false
+        rulesContainer = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        rulesContainer.addSubview(rulesScroll)
+
+        hookContainer = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        buildHookTab(hookContainer!)
+
+        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, rulesContainer!, hookContainer!]
+        for (i, container) in containers.enumerated() {
+            contentArea.addSubview(container)
+            container.isHidden = (i != 0)
+        }
+
+        // --- Bottom Bar ---
+        let bottomSep = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: 1))
+        bottomSep.wantsLayer = true; bottomSep.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        contentArea.addSubview(bottomSep)
+
+        let bottomBar = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: bottomH))
+        bottomBar.wantsLayer = true
+        bottomBar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        contentArea.addSubview(bottomBar)
+
+        let saveBtn = NSButton(frame: NSRect(x: 20, y: 12, width: 120, height: 32))
+        saveBtn.title = "保存并应用"; saveBtn.bezelStyle = .rounded
+        saveBtn.target = self; saveBtn.action = #selector(saveSettings)
+        bottomBar.addSubview(saveBtn)
+
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
+        let versionLabel = NSTextField(frame: NSRect(x: 160, y: 16, width: 120, height: 20))
+        versionLabel.isEditable = false; versionLabel.isBordered = false; versionLabel.backgroundColor = .clear
+        versionLabel.font = NSFont.systemFont(ofSize: 11)
+        versionLabel.textColor = NSColor.tertiaryLabelColor
+        versionLabel.stringValue = "CodeLight v\(ver)"
+        bottomBar.addSubview(versionLabel)
+
+        let checkUpdateBtn = NSButton(frame: NSRect(x: 300, y: 14, width: 80, height: 22))
+        checkUpdateBtn.title = "检查更新"; checkUpdateBtn.bezelStyle = .inline
+        checkUpdateBtn.font = NSFont.systemFont(ofSize: 11)
+        checkUpdateBtn.target = self; checkUpdateBtn.action = #selector(checkForUpdate)
+        bottomBar.addSubview(checkUpdateBtn)
+
+        updateStatusLabel = NSTextField(frame: NSRect(x: 20, y: -2, width: 400, height: 16))
+        updateStatusLabel.isEditable = false; updateStatusLabel.isBordered = false; updateStatusLabel.backgroundColor = .clear
+        updateStatusLabel.font = NSFont.systemFont(ofSize: 10)
+        updateStatusLabel.textColor = NSColor.secondaryLabelColor
+        updateStatusLabel.stringValue = ""
+        bottomBar.addSubview(updateStatusLabel)
     }
 
-    func buildSettingsTab(_ view: NSView, _ c: AppConfig) {
-        var y: CGFloat = 540
-        let lx: CGFloat = 10, rx: CGFloat = 140
+    // MARK: - Section Builders
+
+    func buildGeneralSection(_ view: NSView, _ c: AppConfig) {
+        var y: CGFloat = 16
+        let rx: CGFloat = 130
 
         func label(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: lx, y: yy, width: 120, height: 24))
+            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 110, height: 24))
             l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
             l.stringValue = text; l.font = NSFont.systemFont(ofSize: 13); l.alignment = .right
             view.addSubview(l)
@@ -1518,14 +1648,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             view.addSubview(l)
         }
 
-        func separator(_ yy: CGFloat) {
-            let line = NSView(frame: NSRect(x: 16, y: yy, width: 328, height: 1))
-            line.wantsLayer = true; line.layer?.backgroundColor = NSColor.separatorColor.cgColor
-            view.addSubview(line)
-        }
-
-        sectionTitle("连接", y + 2)
-        y -= 8
+        sectionTitle("连接", y); y += 28
         label("服务端口:", y)
         serverField = NSTextField(frame: NSRect(x: rx, y: y, width: 100, height: 24))
         let port = c.serverURL.components(separatedBy: ":").last ?? "8866"
@@ -1534,19 +1657,15 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         view.addSubview(serverField)
 
         let testBtn = NSButton(frame: NSRect(x: rx + 108, y: y, width: 56, height: 24))
-        testBtn.title = "测试"
-        testBtn.bezelStyle = .rounded
-        testBtn.font = NSFont.systemFont(ofSize: 11)
-        testBtn.target = self
-        testBtn.action = #selector(testPortAction(_:))
+        testBtn.title = "测试"; testBtn.bezelStyle = .rounded; testBtn.font = NSFont.systemFont(ofSize: 11)
+        testBtn.target = self; testBtn.action = #selector(testPortAction(_:))
         view.addSubview(testBtn)
 
-        portTestLabel = NSTextField(frame: NSRect(x: rx + 170, y: y + 4, width: 120, height: 16))
+        portTestLabel = NSTextField(frame: NSRect(x: rx + 170, y: y + 4, width: 140, height: 16))
         portTestLabel.isEditable = false; portTestLabel.isBordered = false
         portTestLabel.backgroundColor = .clear; portTestLabel.font = NSFont.systemFont(ofSize: 11)
         portTestLabel.stringValue = ""
-        view.addSubview(portTestLabel)
-        y -= 32
+        view.addSubview(portTestLabel); y += 36
 
         label("轮询间隔:", y + 4)
         pollSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
@@ -1556,10 +1675,29 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         pollLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
         pollLabel.isEditable = false; pollLabel.isBordered = false; pollLabel.backgroundColor = .clear
         pollLabel.stringValue = String(format: "%.1fs", c.pollInterval); pollLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(pollLabel); y -= 36
+        view.addSubview(pollLabel)
+    }
 
-        y -= 6; separator(y + 2); y -= 18
-        sectionTitle("外观", y + 2); y -= 8
+    func buildAppearanceSection(_ view: NSView, _ c: AppConfig) {
+        var y: CGFloat = 16
+        let rx: CGFloat = 130
+
+        func label(_ text: String, _ yy: CGFloat) {
+            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 110, height: 24))
+            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
+            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 13); l.alignment = .right
+            view.addSubview(l)
+        }
+
+        func sectionTitle(_ text: String, _ yy: CGFloat) {
+            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
+            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
+            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            l.textColor = NSColor.secondaryLabelColor
+            view.addSubview(l)
+        }
+
+        sectionTitle("外观", y); y += 28
 
         label("透明度:", y + 4)
         opacitySlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
@@ -1569,14 +1707,14 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         opacityLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
         opacityLabel.isEditable = false; opacityLabel.isBordered = false; opacityLabel.backgroundColor = .clear
         opacityLabel.stringValue = "\(Int(c.opacity * 100))%"; opacityLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(opacityLabel); y -= 28
+        view.addSubview(opacityLabel); y += 32
 
         label("吉祥物:", y + 4)
         mascotSelect = NSPopUpButton(frame: NSRect(x: rx, y: y + 2, width: 140, height: 24))
-        mascotSelect.addItems(withTitles: ["🐂 小牛", "🐱 小猫", "🤖 机器人", "🐴 小马"])
-        mascotSelect.selectItem(at: ["cow": 0, "cat": 1, "robot": 2, "horse": 3][c.mascotType] ?? 0)
+        mascotSelect.addItems(withTitles: ["🐂 小牛", "🐱 小猫", "🤖 机器人", "🐴 小马", "🏀 小鸡"])
+        mascotSelect.selectItem(at: ["cow": 0, "cat": 1, "robot": 2, "horse": 3, "chicken": 4][c.mascotType] ?? 0)
         mascotSelect.target = self; mascotSelect.action = #selector(mascotChanged)
-        view.addSubview(mascotSelect); y -= 28
+        view.addSubview(mascotSelect); y += 32
 
         label("主题:", y + 4)
         themeSelect = NSPopUpButton(frame: NSRect(x: rx, y: y + 2, width: 140, height: 24))
@@ -1589,13 +1727,13 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         colorWell.color = NSColor(fromHex: c.customColor) ?? NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0)
         colorWell.isHidden = c.theme != "custom"
         colorWell.target = self; colorWell.action = #selector(themeChanged)
-        view.addSubview(colorWell); y -= 28
+        view.addSubview(colorWell); y += 32
 
-        weatherCheck = NSButton(frame: NSRect(x: rx, y: y, width: 200, height: 24))
+        weatherCheck = NSButton(frame: NSRect(x: rx, y: y, width: 220, height: 24))
         weatherCheck.setButtonType(.switch); weatherCheck.title = "天气主题（实时天气背景）"
         weatherCheck.state = c.weatherThemeEnabled ? .on : .off
         weatherCheck.target = self; weatherCheck.action = #selector(weatherToggled)
-        view.addSubview(weatherCheck); y -= 20
+        view.addSubview(weatherCheck); y += 24
 
         weatherStatusLabel = NSTextField(frame: NSRect(x: rx + 10, y: y + 4, width: 200, height: 16))
         weatherStatusLabel.isEditable = false; weatherStatusLabel.isBordered = false
@@ -1609,23 +1747,18 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         view.addSubview(weatherStatusLabel)
 
-        // 城市选择
         let cityNames = CITIES.map { $0.name }
-        let cityX = rx + 200
-        citySelect = NSPopUpButton(frame: NSRect(x: cityX, y: y - 2, width: 90, height: 24))
+        citySelect = NSPopUpButton(frame: NSRect(x: rx + 210, y: y - 2, width: 90, height: 24))
         citySelect.addItems(withTitles: cityNames)
         citySelect.selectItem(withTitle: c.weatherCity)
         citySelect.target = self; citySelect.action = #selector(cityChanged)
         citySelect.font = NSFont.systemFont(ofSize: 11)
         view.addSubview(citySelect)
 
-        // 双击天气标签区域切换预览
         let dblClickView = DoubleClickView(frame: NSRect(x: rx + 10, y: y, width: 200, height: 24))
-        dblClickView.onDoubleClick = { [weak self] in
-            self?.cycleWeatherPreview()
-        }
+        dblClickView.onDoubleClick = { [weak self] in self?.cycleWeatherPreview() }
         view.addSubview(dblClickView)
-        y -= 28
+        y += 32
 
         label("闪烁速度:", y + 4)
         blinkSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
@@ -1635,7 +1768,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         blinkLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
         blinkLabel.isEditable = false; blinkLabel.isBordered = false; blinkLabel.backgroundColor = .clear
         blinkLabel.stringValue = String(format: "%.1fs", c.blinkSpeed); blinkLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(blinkLabel); y -= 28
+        view.addSubview(blinkLabel); y += 32
 
         label("窗口大小:", y + 4)
         sizeSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
@@ -1645,7 +1778,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         sizeLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
         sizeLabel.isEditable = false; sizeLabel.isBordered = false; sizeLabel.backgroundColor = .clear
         sizeLabel.stringValue = "\(Int(c.windowSize))"; sizeLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(sizeLabel); y -= 28
+        view.addSubview(sizeLabel); y += 32
 
         label("显示样式:", y + 4)
         displayModeSegment = NSSegmentedControl(labels: ["竖向", "横向", "迷你", "磁吸"], trackingMode: .selectOne, target: self, action: #selector(displayModeChanged))
@@ -1654,28 +1787,40 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let modeIdx = ["vertical": 0, "horizontal": 1, "mini": 2, "edgebar": 3][c.displayMode] ?? 0
         displayModeSegment.selectedSegment = modeIdx
         view.addSubview(displayModeSegment)
-        // 保留 hidden checkbox 兼容 saveSettings
+
         horizontalCheck = NSButton(frame: NSRect(x: -999, y: -999, width: 1, height: 1))
         horizontalCheck.setButtonType(.switch); horizontalCheck.state = c.horizontal ? .on : .off
-        view.addSubview(horizontalCheck); y -= 32
+        view.addSubview(horizontalCheck); y += 36
 
         showStatusCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         showStatusCheck.setButtonType(.switch); showStatusCheck.title = "显示底部状态文字"
         showStatusCheck.state = c.showStatusText ? .on : .off
-        view.addSubview(showStatusCheck); y -= 36
+        view.addSubview(showStatusCheck)
+    }
 
-        separator(y + 2); y -= 18
-        sectionTitle("行为", y + 2); y -= 8
+    func buildBehaviorSection(_ view: NSView, _ c: AppConfig) {
+        var y: CGFloat = 16
+        let rx: CGFloat = 130
+
+        func sectionTitle(_ text: String, _ yy: CGFloat) {
+            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
+            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
+            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            l.textColor = NSColor.secondaryLabelColor
+            view.addSubview(l)
+        }
+
+        sectionTitle("行为", y); y += 28
 
         autoLaunchCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         autoLaunchCheck.setButtonType(.switch); autoLaunchCheck.title = "开机自动启动"
         autoLaunchCheck.state = c.autoLaunch ? .on : .off
-        view.addSubview(autoLaunchCheck); y -= 28
+        view.addSubview(autoLaunchCheck); y += 32
 
         notifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         notifyCheck.setButtonType(.switch); notifyCheck.title = "任务完成时发送通知"
         notifyCheck.state = c.notifyOnDone ? .on : .off
-        view.addSubview(notifyCheck); y -= 28
+        view.addSubview(notifyCheck); y += 32
 
         let soundLabel = NSTextField(labelWithString: "完成提示音:")
         soundLabel.frame = NSRect(x: rx, y: y + 4, width: 80, height: 18)
@@ -1684,62 +1829,34 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         soundSelect = NSPopUpButton(frame: NSRect(x: rx + 88, y: y, width: 150, height: 26))
         soundSelect.addItems(withTitles: sounds)
         if let idx = sounds.firstIndex(of: c.completionSound) { soundSelect.selectItem(at: idx) }
-        view.addSubview(soundLabel); view.addSubview(soundSelect); y -= 32
+        view.addSubview(soundSelect); y += 36
 
         permNotifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         permNotifyCheck.setButtonType(.switch); permNotifyCheck.title = "权限请求弹窗确认"
         permNotifyCheck.state = c.notifyOnPermission ? .on : .off
-        view.addSubview(permNotifyCheck); y -= 28
+        view.addSubview(permNotifyCheck); y += 32
 
         fullscreenCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         fullscreenCheck.setButtonType(.switch); fullscreenCheck.title = "全屏应用上层显示"
         fullscreenCheck.state = c.showOnFullscreen ? .on : .off
-        view.addSubview(fullscreenCheck); y -= 28
+        view.addSubview(fullscreenCheck); y += 32
 
         floatingCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         floatingCheck.setButtonType(.switch); floatingCheck.title = "窗口悬浮置顶"
         floatingCheck.state = c.isFloating ? .on : .off
-        view.addSubview(floatingCheck); y -= 40
-
-        let saveBtn = NSButton(frame: NSRect(x: 110, y: y, width: 160, height: 32))
-        saveBtn.title = "保存并应用"; saveBtn.bezelStyle = .rounded
-        saveBtn.target = self; saveBtn.action = #selector(saveSettings)
-        view.addSubview(saveBtn)
-
-        let versionLabel = NSTextField(frame: NSRect(x: 0, y: y - 30, width: 300, height: 20))
-        versionLabel.isEditable = false; versionLabel.isBordered = false; versionLabel.backgroundColor = .clear
-        versionLabel.alignment = .right
-        versionLabel.font = NSFont.systemFont(ofSize: 11)
-        versionLabel.textColor = NSColor.tertiaryLabelColor
-        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
-        versionLabel.stringValue = "CodeLight v\(ver)"
-        view.addSubview(versionLabel)
-
-        let checkUpdateBtn = NSButton(frame: NSRect(x: 310, y: y - 30, width: 100, height: 20))
-        checkUpdateBtn.title = "检查更新"
-        checkUpdateBtn.bezelStyle = .inline
-        checkUpdateBtn.font = NSFont.systemFont(ofSize: 11)
-        checkUpdateBtn.target = self
-        checkUpdateBtn.action = #selector(checkForUpdate)
-        view.addSubview(checkUpdateBtn)
-
-        updateStatusLabel = NSTextField(frame: NSRect(x: 30, y: y - 55, width: 360, height: 20))
-        updateStatusLabel.isEditable = false; updateStatusLabel.isBordered = false; updateStatusLabel.backgroundColor = .clear
-        updateStatusLabel.alignment = .center
-        updateStatusLabel.font = NSFont.systemFont(ofSize: 11)
-        updateStatusLabel.textColor = NSColor.secondaryLabelColor
-        updateStatusLabel.stringValue = ""
-        view.addSubview(updateStatusLabel)
+        view.addSubview(floatingCheck)
     }
 
-    func buildRulesTab(_ view: NSView) {
-        var y: CGFloat = 540
+    @discardableResult
+    func buildRulesTab(_ view: NSView) -> CGFloat {
+        var y: CGFloat = 16
         let rules = [
-            ("🟢 绿灯常亮", "空闲中", "当前无操作，AI 待命中。纯色常亮不闪烁。"),
-            ("🟡 黄灯呼吸", "思考中", "AI 正在读代码、分析逻辑、检索上下文。亮度在 30%~100% 间 sin 曲线平滑呼吸。"),
-            ("🔴 红灯快闪", "执行中", "AI 正在调用工具（Bash/Read/Edit 等）。高频开关约 4Hz，表示激烈操作中。"),
-            ("🔴 红灯慢闪", "警告中", "会话异常终止。低频慢闪约 0.5Hz，警告级节奏。"),
-            ("🟡 黄灯流水", "修复中", "工具调用失败后自动重试。中等频率闪烁，表示正在迭代修复代码。"),
+            ("🟢 绿灯常亮", "空闲中", "AI 待命中，无操作。绿灯纯色常亮，不闪烁。"),
+            ("🟡 黄灯呼吸", "思考中", "AI 正在读代码、分析逻辑、检索上下文。亮度在 30%~100% 间平滑呼吸。"),
+            ("🔴 红灯开关", "执行中", "AI 正在调用工具（Bash/Read/Edit 等）。红灯开关闪烁，约 1 秒一周期。"),
+            ("🟡 黄灯快呼吸", "修复中", "工具调用失败后自动重试。黄灯快速呼吸，亮度 30%~100%。"),
+            ("🔴 红灯快闪", "警告中", "会话异常终止或出错。红灯快速开关闪烁，约 0.5 秒一周期。"),
+            ("🔴 红灯快闪", "等待授权", "AI 请求用户权限确认。红灯快速开关闪烁，提示需要操作。"),
         ]
 
         for (title, subtitle, desc) in rules {
@@ -1747,21 +1864,21 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             titleField.isEditable = false; titleField.isBordered = false; titleField.backgroundColor = .clear
             titleField.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
             titleField.stringValue = "\(title)  —  \(subtitle)"
-            view.addSubview(titleField); y -= 26
+            view.addSubview(titleField); y += 26
 
-            let descField = NSTextField(frame: NSRect(x: 28, y: y - 10, width: 300, height: 42))
+            let descField = NSTextField(frame: NSRect(x: 28, y: y, width: 300, height: 42))
             descField.isEditable = false; descField.isBordered = false; descField.backgroundColor = .clear
             descField.font = NSFont.systemFont(ofSize: 11)
             descField.textColor = NSColor(white: 0.45, alpha: 1.0)
             descField.stringValue = desc
             descField.cell?.wraps = true
-            view.addSubview(descField); y -= 54
+            view.addSubview(descField); y += 54
         }
 
         // 分隔线
-        let sep = NSView(frame: NSRect(x: 16, y: y + 2, width: 328, height: 1))
+        let sep = NSView(frame: NSRect(x: 16, y: y, width: 328, height: 1))
         sep.wantsLayer = true; sep.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        view.addSubview(sep); y -= 12
+        view.addSubview(sep); y += 12
 
         // 测试体验标题
         let testTitle = NSTextField(frame: NSRect(x: 16, y: y, width: 300, height: 20))
@@ -1769,7 +1886,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         testTitle.stringValue = "测试体验 — 点击按钮实时预览灯效"
         testTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         testTitle.textColor = NSColor.secondaryLabelColor
-        view.addSubview(testTitle); y -= 30
+        view.addSubview(testTitle); y += 30
 
         // 5 个测试按钮 + 1 个恢复按钮，两行排列
         let testButtons: [(String, String)] = [
@@ -1790,7 +1907,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         resetBtn.title = "恢复"; resetBtn.bezelStyle = .rounded; resetBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         resetBtn.target = self; resetBtn.action = #selector(testLightReset(_:))
         view.addSubview(resetBtn)
-        y -= 32
+        y += 32
 
         // 权限请求测试按钮
         let permTestBtn = NSButton(frame: NSRect(x: 16, y: y, width: 120, height: btnH))
@@ -1798,7 +1915,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         permTestBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         permTestBtn.target = self; permTestBtn.action = #selector(testPermissionRequest(_:))
         view.addSubview(permTestBtn)
-        y -= 34
+        y += 34
 
         // 测试状态标签
         let testStatusLabel = NSTextField(frame: NSRect(x: 16, y: y, width: 340, height: 18))
@@ -1808,6 +1925,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         testStatusLabel.stringValue = "点击上方按钮，观察红绿灯实时切换效果"
         testStatusLabel.tag = 999
         view.addSubview(testStatusLabel)
+        return y + 18
     }
 
     @objc func testLightState(_ sender: NSButton) {
@@ -2193,8 +2311,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func mascotChanged() {
-        let types = ["cow", "cat", "robot", "horse"]
-        appDelegate.trafficContainer?.mascotType = types[mascotSelect.indexOfSelectedItem]
+        let types = ["cow", "cat", "robot", "horse", "chicken"]
+        let t = types[mascotSelect.indexOfSelectedItem]
+        appDelegate.trafficContainer?.mascotType = t
+        appDelegate.redView?.mascotType = t
     }
 
     @objc func themeChanged() {
@@ -2309,7 +2429,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.edgeBar = (c.displayMode == "edgebar") ? (c.edgeBar ?? "right") : nil
         c.showStatusText = showStatusCheck.state == .on
         c.isFloating = floatingCheck.state == .on
-        c.mascotType = ["cow", "cat", "robot", "horse"][mascotSelect.indexOfSelectedItem]
+        c.mascotType = ["cow", "cat", "robot", "horse", "chicken"][mascotSelect.indexOfSelectedItem]
         c.theme = ["dark", "light", "custom"][themeSelect.indexOfSelectedItem]
         if let hex = colorWell.color.hexString { c.customColor = hex }
         c.weatherThemeEnabled = weatherCheck.state == .on
@@ -2360,6 +2480,21 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         } catch {
             updateStatusLabel.stringValue = "检查失败"
             updateStatusLabel.textColor = NSColor.systemRed
+        }
+    }
+
+    // MARK: - Sidebar Button Handler
+
+    @objc func sidebarButtonClicked(_ sender: NSButton) {
+        let row = sender.tag
+        for (i, c) in containers.enumerated() {
+            c.isHidden = (i != row)
+        }
+        for (i, btn) in sidebarButtons.enumerated() {
+            let isSelected = (i == row)
+            btn.font = NSFont.systemFont(ofSize: 13, weight: isSelected ? .semibold : .regular)
+            btn.contentTintColor = isSelected ? NSColor.controlAccentColor : NSColor.labelColor
+            btn.layer?.backgroundColor = isSelected ? NSColor.controlAccentColor.withAlphaComponent(0.1).cgColor : nil
         }
     }
 

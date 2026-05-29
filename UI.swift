@@ -290,21 +290,26 @@ class RealTrafficLightView: NSView {
 
         // 吉祥物 — 灯亮时在灯珠上画小牛马
         if isOn && lampR > 12 {
-            NSGraphicsContext.saveGraphicsState()
-            if mascotAlpha < 1.0 {
-                NSGraphicsContext.current?.cgContext.setAlpha(mascotAlpha)
+            if mascotType == "chicken" {
+                // 小鸡模式：篮球占满灯，灯色=篮球色
+                drawMascot(center: center, size: lampR * 1.2, lampColor: lampColor)
+            } else {
+                NSGraphicsContext.saveGraphicsState()
+                if mascotAlpha < 1.0 {
+                    NSGraphicsContext.current?.cgContext.setAlpha(mascotAlpha)
+                }
+                // 半透明衬底，提升吉祥物可辨识度
+                NSColor(white: 0.0, alpha: 0.35).setFill()
+                let bg = NSBezierPath()
+                bg.appendArc(withCenter: center, radius: lampR * 0.6, startAngle: 0, endAngle: 360)
+                bg.fill()
+                drawMascot(center: center, size: lampR * 1.2, lampColor: nil)
+                NSGraphicsContext.restoreGraphicsState()
             }
-            // 半透明衬底，提升吉祥物可辨识度
-            NSColor(white: 0.0, alpha: 0.35).setFill()
-            let bg = NSBezierPath()
-            bg.appendArc(withCenter: center, radius: lampR * 0.6, startAngle: 0, endAngle: 360)
-            bg.fill()
-            drawMascot(center: center, size: lampR * 1.2)
-            NSGraphicsContext.restoreGraphicsState()
         }
     }
 
-    func drawMascot(center: NSPoint, size: CGFloat) {
+    func drawMascot(center: NSPoint, size: CGFloat, lampColor: NSColor?) {
         // 优先加载外部图片
         if let img = loadMascotImage(name: mascotType) {
             let s = size * 2
@@ -317,6 +322,7 @@ class RealTrafficLightView: NSView {
         case "cat": drawCatMascot(center: center, size: size)
         case "robot": drawRobotMascot(center: center, size: size)
         case "horse": drawHorseMascot(center: center, size: size)
+        case "chicken": drawChickenMascot(center: center, size: size, ballColor: lampColor)
         default: drawCowMascot(center: center, size: size)
         }
     }
@@ -777,6 +783,171 @@ class RealTrafficLightView: NSView {
             drawHorseHead(hx: cx + s*0.28, hy: cy + s*0.2)
             let zA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
             NSAttributedString(string: "z z z", attributes: [.font: NSFont.systemFont(ofSize: s*0.25, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(zA)]).draw(at: NSPoint(x: cx - s*0.15, y: cy + s*0.22))
+        }
+    }
+
+    func drawChickenMascot(center: NSPoint, size: CGFloat, ballColor: NSColor?) {
+        let cx = center.x, cy = center.y, s = size
+        let bodyYellow = NSColor(red: 1.0, green: 0.92, blue: 0.4, alpha: 0.95)
+        let bodyDark = NSColor(red: 0.9, green: 0.78, blue: 0.2, alpha: 0.85)
+        let beakColor = NSColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.9)
+        let combColor = NSColor(red: 0.95, green: 0.2, blue: 0.15, alpha: 0.9)
+        let eyeColor = NSColor(white: 0.1, alpha: 0.9)
+        let ballFill = ballColor ?? NSColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.85)
+        let ballLine = NSColor(white: 0.2, alpha: 0.5)
+
+        // 篮球占满整个灯
+        let ballR = s * 0.42
+
+        func drawBasketballFull(bx: CGFloat, by: CGFloat, bounce: CGFloat = 0) {
+            let byy = by + bounce
+            // 球体
+            ballFill.setFill()
+            NSBezierPath(ovalIn: NSRect(x: bx - ballR, y: byy - ballR, width: ballR * 2, height: ballR * 2)).fill()
+            // 纹路
+            ballLine.setStroke()
+            let sw = ballR * 0.04
+            // 十字线
+            let h = NSBezierPath()
+            h.move(to: NSPoint(x: bx - ballR * 0.88, y: byy))
+            h.line(to: NSPoint(x: bx + ballR * 0.88, y: byy))
+            h.lineWidth = sw; h.stroke()
+            let v = NSBezierPath()
+            v.move(to: NSPoint(x: bx, y: byy - ballR * 0.88))
+            v.line(to: NSPoint(x: bx, y: byy + ballR * 0.88))
+            v.lineWidth = sw; v.stroke()
+            // 左弧
+            let lc = NSBezierPath()
+            lc.move(to: NSPoint(x: bx - ballR * 0.3, y: byy - ballR * 0.88))
+            lc.curve(to: NSPoint(x: bx - ballR * 0.3, y: byy + ballR * 0.88),
+                     controlPoint1: NSPoint(x: bx - ballR * 0.75, y: byy - ballR * 0.3),
+                     controlPoint2: NSPoint(x: bx - ballR * 0.75, y: byy + ballR * 0.3))
+            lc.lineWidth = sw; lc.stroke()
+            // 右弧
+            let rc = NSBezierPath()
+            rc.move(to: NSPoint(x: bx + ballR * 0.3, y: byy - ballR * 0.88))
+            rc.curve(to: NSPoint(x: bx + ballR * 0.3, y: byy + ballR * 0.88),
+                     controlPoint1: NSPoint(x: bx + ballR * 0.75, y: byy - ballR * 0.3),
+                     controlPoint2: NSPoint(x: bx + ballR * 0.75, y: byy + ballR * 0.3))
+            rc.lineWidth = sw; rc.stroke()
+            // 高光
+            NSColor.white.withAlphaComponent(0.2).setFill()
+            NSBezierPath(ovalIn: NSRect(x: bx - ballR * 0.4, y: byy + ballR * 0.15, width: ballR * 0.35, height: ballR * 0.2)).fill()
+        }
+
+        func drawChick(hx: CGFloat, hy: CGFloat, leftArm: CGFloat = 0, rightArm: CGFloat = 0, headTilt: CGFloat = 0) {
+            // Body
+            bodyYellow.setFill()
+            NSBezierPath(ovalIn: NSRect(x: hx - s * 0.08, y: hy - s * 0.1, width: s * 0.16, height: s * 0.14)).fill()
+            // Wings
+            bodyDark.setFill()
+            let lw = NSBezierPath()
+            lw.move(to: NSPoint(x: hx - s * 0.07, y: hy - s * 0.03))
+            lw.line(to: NSPoint(x: hx - s * 0.16, y: hy + s * 0.02 + leftArm))
+            lw.line(to: NSPoint(x: hx - s * 0.06, y: hy + s * 0.03))
+            lw.close(); lw.fill()
+            let rw = NSBezierPath()
+            rw.move(to: NSPoint(x: hx + s * 0.07, y: hy - s * 0.03))
+            rw.line(to: NSPoint(x: hx + s * 0.16, y: hy + s * 0.02 + rightArm))
+            rw.line(to: NSPoint(x: hx + s * 0.06, y: hy + s * 0.03))
+            rw.close(); rw.fill()
+            // Legs
+            NSColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.8).setStroke()
+            let leg = NSBezierPath(); leg.lineWidth = s * 0.018
+            leg.move(to: NSPoint(x: hx - s * 0.03, y: hy - s * 0.1))
+            leg.line(to: NSPoint(x: hx - s * 0.03, y: hy - s * 0.16))
+            leg.move(to: NSPoint(x: hx + s * 0.03, y: hy - s * 0.1))
+            leg.line(to: NSPoint(x: hx + s * 0.03, y: hy - s * 0.16))
+            leg.stroke()
+            // Head
+            let hhx = hx + headTilt
+            bodyYellow.setFill()
+            let headR = s * 0.07
+            NSBezierPath(ovalIn: NSRect(x: hhx - headR, y: hy + s * 0.05 - headR, width: headR * 2, height: headR * 2)).fill()
+            // Comb
+            combColor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: hhx - s * 0.025, y: hy + s * 0.05 + headR * 0.5, width: s * 0.02, height: s * 0.04)).fill()
+            NSBezierPath(ovalIn: NSRect(x: hhx + s * 0.008, y: hy + s * 0.05 + headR * 0.5, width: s * 0.02, height: s * 0.05)).fill()
+            // Beak
+            beakColor.setFill()
+            let bk = NSBezierPath()
+            bk.move(to: NSPoint(x: hhx - s * 0.015, y: hy + s * 0.05))
+            bk.line(to: NSPoint(x: hhx, y: hy + s * 0.01))
+            bk.line(to: NSPoint(x: hhx + s * 0.015, y: hy + s * 0.05))
+            bk.close(); bk.fill()
+            // Eyes
+            eyeColor.setFill()
+            let ey = hy + s * 0.065
+            NSBezierPath(ovalIn: NSRect(x: hhx - s * 0.028, y: ey - s * 0.012, width: s * 0.02, height: s * 0.02)).fill()
+            NSBezierPath(ovalIn: NSRect(x: hhx + s * 0.012, y: ey - s * 0.012, width: s * 0.02, height: s * 0.02)).fill()
+            NSColor.white.withAlphaComponent(0.8).setFill()
+            NSBezierPath(ovalIn: NSRect(x: hhx - s * 0.024, y: ey + s * 0.003, width: s * 0.008, height: s * 0.008)).fill()
+            NSBezierPath(ovalIn: NSRect(x: hhx + s * 0.016, y: ey + s * 0.003, width: s * 0.008, height: s * 0.008)).fill()
+            // Blush
+            NSColor(red: 1.0, green: 0.5, blue: 0.4, alpha: 0.4).setFill()
+            NSBezierPath(ovalIn: NSRect(x: hhx - s * 0.045, y: ey - s * 0.005, width: s * 0.02, height: s * 0.012)).fill()
+            NSBezierPath(ovalIn: NSRect(x: hhx + s * 0.03, y: ey - s * 0.005, width: s * 0.02, height: s * 0.012)).fill()
+        }
+
+        let chickBaseY = cy + ballR * 0.15
+
+        switch mascotState {
+        case "working":
+            let bounce = -abs(sin(Double(mascotPhase) * .pi * 4)) * s * 0.04
+            let jump = -abs(sin(Double(mascotPhase) * .pi * 4)) * s * 0.06
+            let arm = sin(Double(mascotPhase) * .pi * 4) * s * 0.03
+            drawBasketballFull(bx: cx, by: cy, bounce: bounce)
+            drawChick(hx: cx, hy: chickBaseY + jump, leftArm: 0, rightArm: CGFloat(arm))
+            // 速度线
+            let wA = CGFloat(0.2 + 0.3 * sin(Double(mascotPhase) * .pi * 4))
+            NSColor.white.withAlphaComponent(wA).setStroke()
+            for i in 0..<3 {
+                let ly = cy + s * 0.06 * CGFloat(i - 1)
+                let line = NSBezierPath()
+                line.move(to: NSPoint(x: cx - ballR - s * 0.04 * CGFloat(i + 1), y: ly))
+                line.line(to: NSPoint(x: cx - ballR - s * 0.04 * CGFloat(i + 1) - s * 0.06, y: ly))
+                line.lineWidth = 1.5; line.stroke()
+            }
+        case "thinking":
+            let tilt = sin(Double(mascotPhase) * .pi * 2) * s * 0.01
+            drawBasketballFull(bx: cx, by: cy)
+            drawChick(hx: cx, hy: chickBaseY, leftArm: s * 0.04, rightArm: 0, headTilt: CGFloat(tilt))
+            let qA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
+            NSAttributedString(string: "?", attributes: [.font: NSFont.systemFont(ofSize: s * 0.3, weight: .bold), .foregroundColor: NSColor.white.withAlphaComponent(qA)]).draw(at: NSPoint(x: cx + s * 0.06, y: chickBaseY + s * 0.18))
+        case "fixing":
+            let stomp = sin(Double(mascotPhase) * .pi * 6) * s * 0.03
+            let bounce = -abs(sin(Double(mascotPhase) * .pi * 6)) * s * 0.02
+            drawBasketballFull(bx: cx, by: cy, bounce: bounce)
+            drawChick(hx: cx, hy: chickBaseY + CGFloat(stomp), leftArm: CGFloat(stomp) * 0.5, rightArm: CGFloat(stomp))
+            let dA = CGFloat(0.4 + 0.4 * sin(Double(mascotPhase) * .pi * 5))
+            NSColor(white: 0.7, alpha: dA).setFill()
+            for i in 0..<3 {
+                let dx = s * 0.05 * CGFloat(i) * CGFloat(cos(Double(mascotPhase) * .pi * 3 + Double(i)))
+                let dy = s * 0.03 * CGFloat(i) * CGFloat(sin(Double(mascotPhase) * .pi * 3 + Double(i)))
+                NSBezierPath(ovalIn: NSRect(x: cx + ballR * 0.4 + dx, y: cy - ballR * 0.3 - dy, width: s * 0.02, height: s * 0.02)).fill()
+            }
+        case "error":
+            let tilt = CGFloat(sin(Double(mascotPhase) * .pi * 2)) * s * 0.015
+            drawBasketballFull(bx: cx, by: cy)
+            NSGraphicsContext.saveGraphicsState()
+            let rot = NSAffineTransform()
+            let px = cx + s * 0.04, py = cy + ballR * 0.1
+            rot.translateX(by: px, yBy: py)
+            rot.rotate(byDegrees: 70 + tilt * 50)
+            rot.translateX(by: -px, yBy: -py)
+            let t = rot.transformStruct
+            let cg = CGAffineTransform(a: t.m11, b: t.m12, c: t.m21, d: t.m22, tx: t.tX, ty: t.tY)
+            NSGraphicsContext.current!.cgContext.concatenate(cg)
+            drawChick(hx: px, hy: py)
+            NSGraphicsContext.restoreGraphicsState()
+            let sA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 4))
+            NSAttributedString(string: "★ ★", attributes: [.font: NSFont.systemFont(ofSize: s * 0.2, weight: .bold), .foregroundColor: NSColor.yellow.withAlphaComponent(sA)]).draw(at: NSPoint(x: cx - s * 0.04, y: cy + ballR * 0.4))
+        default:
+            let sway = sin(Double(mascotPhase) * .pi * 2) * s * 0.01
+            drawBasketballFull(bx: cx, by: cy)
+            drawChick(hx: cx + CGFloat(sway), hy: chickBaseY)
+            let zA = CGFloat(0.3 + 0.5 * sin(Double(mascotPhase) * .pi * 2))
+            NSAttributedString(string: "z z z", attributes: [.font: NSFont.systemFont(ofSize: s * 0.15, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(zA)]).draw(at: NSPoint(x: cx + s * 0.06, y: chickBaseY + s * 0.15))
         }
     }
 }
