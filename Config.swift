@@ -139,3 +139,158 @@ extension NSColor {
         return String(format: "#%02X%02X%02X", r, g, b)
     }
 }
+
+// ============================================================
+// StatsManager — AI 使用统计
+// ============================================================
+
+class StatsManager {
+    static let shared = StatsManager()
+
+    private struct Event: Codable {
+        let ts: Double       // timeIntervalSince1970
+        let state: String    // idle/thinking/working/fixing/error/waiting
+        let message: String
+        let session: String
+    }
+
+    private struct DailySummary: Codable {
+        let date: String     // "yyyy-MM-dd"
+        var totalDuration: Double = 0        // non-idle seconds
+        var toolCalls: Int = 0               // working transitions count
+        var sessionCount: Int = 0            // unique sessions
+        var stateDurations: [String: Double] = [:]  // state → seconds
+        var toolBreakdown: [String: Int] = [:]      // tool name → count (from message)
+    }
+
+    private var events: [Event] = []
+    private let maxEvents = 10000
+    private let retainDays = 30
+    private let saveKey = "codelight.stats.v1"
+
+    private init() {
+        loadEvents()
+    }
+
+    func record(state: String, message: String, sessionId: String) {
+        let event = Event(ts: Date().timeIntervalSince1970, state: state, message: message, session: sessionId)
+        events.append(event)
+        if events.count > maxEvents { events.removeFirst(events.count - maxEvents) }
+        purgeOldEvents()
+        saveEvents()
+    }
+
+    // MARK: - Queries
+
+    struct DayStats {
+        let date: String
+        let duration: TimeInterval   // active (non-idle) seconds
+        let toolCalls: Int
+        let sessions: Int
+        let thinkingDur: TimeInterval
+        let workingDur: TimeInterval
+        let idleDur: TimeInterval
+        let toolBreakdown: [(String, Int)]
+    }
+
+    func todayStats() -> DayStats {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        return statsForDay(today)
+    }
+
+    func weekStats() -> [DayStats] {
+        let cal = Calendar.current
+        var result: [DayStats] = []
+        for i in (0..<7).reversed() {
+            guard let d = cal.date(byAdding: .day, value: -i, to: Date()) else { continue }
+            let day = cal.startOfDay(for: d)
+            result.append(statsForDay(day))
+        }
+        return result
+    }
+
+    private func statsForDay(_ dayStart: Date) -> DayStats {
+        let dayEnd = dayStart.addingTimeInterval(86400)
+        let dayEvents = events.filter { $0.ts >= dayStart.timeIntervalSince1970 && $0.ts < dayEnd.timeIntervalSince1970 }
+        guard !dayEvents.isEmpty else {
+            let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd"
+            return DayStats(date: fmt.string(from: dayStart), duration: 0, toolCalls: 0, sessions: 0,
+                            thinkingDur: 0, workingDur: 0, idleDur: 86400, toolBreakdown: [])
+        }
+
+        var durations: [String: Double] = [:]
+        var sessions = Set<String>()
+        var toolCalls = 0
+        var toolBreakdown: [String: Int] = [:]
+
+        for i in 0..<dayEvents.count {
+            let e = dayEvents[i]
+            sessions.insert(e.session)
+            if e.state == "working" {
+                toolCalls += 1
+                let tool = extractTool(from: e.message)
+                toolBreakdown[tool, default: 0] += 1
+            }
+            let nextTs: Double
+            if i + 1 < dayEvents.count { nextTs = dayEvents[i + 1].ts }
+            else { nextTs = min(Date().timeIntervalSince1970, dayEnd.timeIntervalSince1970) }
+            let dur = max(nextTs - e.ts, 0)
+            durations[e.state, default: 0] += dur
+        }
+
+        let activeDur = durations.filter { $0.key != "idle" }.values.reduce(0, +)
+        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd"
+
+        let sorted = toolBreakdown.sorted { $0.value > $1.value }
+        return DayStats(
+            date: fmt.string(from: dayStart),
+            duration: activeDur,
+            toolCalls: toolCalls,
+            sessions: sessions.count,
+            thinkingDur: durations["thinking"] ?? 0,
+            workingDur: durations["working"] ?? 0,
+            idleDur: durations["idle"] ?? 0,
+            toolBreakdown: sorted.map { ($0.key, $0.value) }
+        )
+    }
+
+    private func extractTool(from message: String) -> String {
+        // message patterns: "Tool: Bash", "tool_use: Edit", or plain tool name
+        let lower = message.lowercased()
+        for prefix in ["tool: ", "tool_use: ", "using "] {
+            if let range = lower.range(of: prefix) {
+                let rest = String(message[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                let parts = rest.split(separator: " ").first.map(String.init) ?? rest
+                return parts.isEmpty ? message : parts
+            }
+        }
+        // fallback: first word
+        let first = message.split(separator: " ").first.map(String.init) ?? message
+        return first.isEmpty ? "unknown" : first
+    }
+
+    // MARK: - Persistence
+
+    private func saveEvents() {
+        guard let data = try? JSONEncoder().encode(events) else { return }
+        UserDefaults.standard.set(data, forKey: saveKey)
+    }
+
+    private func loadEvents() {
+        guard let data = UserDefaults.standard.data(forKey: saveKey),
+              let loaded = try? JSONDecoder().decode([Event].self, from: data) else { return }
+        events = loaded
+        purgeOldEvents()
+    }
+
+    private func purgeOldEvents() {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -retainDays, to: Date())?.timeIntervalSince1970 ?? 0
+        events = events.filter { $0.ts >= cutoff }
+    }
+
+    func clearAll() {
+        events.removeAll()
+        UserDefaults.standard.removeObject(forKey: saveKey)
+    }
+}

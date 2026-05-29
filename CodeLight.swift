@@ -154,6 +154,7 @@ class LightServer {
         history.append(HistoryEntry(timestamp: Date().timeIntervalSince1970, state: name, message: message, session_id: String(sid.prefix(8)), light: stateLightDict(name)))
         if history.count > maxHistory { history.removeFirst(history.count - maxHistory) }
         onLog?("[状态] [\(sid.prefix(8))] \(name) — \(message)")
+        StatsManager.shared.record(state: name, message: message, sessionId: sid)
     }
 
     private func handlePostState(body: String?) -> RouteResult {
@@ -1465,6 +1466,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var sizeSlider: NSSlider!; var sizeLabel: NSTextField!
     var rulesContainer: NSView!
     var hookContainer: NSView!
+    var statsContainer: NSView!
+    var statsRefreshTimer: Timer?
     var claudeCodeCheck: NSButton!
     var codexCheck: NSButton!
     var cursorCheck: NSButton!
@@ -1480,7 +1483,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var generalContainer: NSView!
     var appearanceContainer: NSView!
     var behaviorContainer: NSView!
-    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "💡 灯效规则", "🔗 配置 Hook"]
+    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "💡 灯效规则", "🔗 配置 Hook", "📊 统计"]
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
@@ -1584,7 +1587,20 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         hookContainer = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
         buildHookTab(hookContainer!)
 
-        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, rulesContainer!, hookContainer!]
+        let statsDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 900))
+        buildStatsTab(statsDoc, c)
+        statsContainer = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        statsContainer.wantsLayer = true
+        statsContainer.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.95).cgColor
+        let statsScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        statsScroll.documentView = statsDoc
+        statsScroll.hasVerticalScroller = true
+        statsScroll.autohidesScrollers = true
+        statsScroll.drawsBackground = false
+        statsScroll.backgroundColor = .clear
+        statsContainer.addSubview(statsScroll)
+
+        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, rulesContainer!, hookContainer!, statsContainer!]
         for (i, container) in containers.enumerated() {
             contentArea.addSubview(container)
             container.isHidden = (i != 0)
@@ -2483,10 +2499,228 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    // MARK: - Stats Tab
+
+    private func buildStatsTab(_ view: NSView, _ c: AppConfig) {
+        let stats = StatsManager.shared.todayStats()
+        let weekData = StatsManager.shared.weekStats()
+        var y: CGFloat = 16
+        let cw: CGFloat = 400
+
+        // Dark theme fixed colors
+        let titleColor = NSColor(white: 1.0, alpha: 0.5)
+        let cardTitleColor = NSColor(white: 1.0, alpha: 0.4)
+        let cardValueColor = NSColor(white: 1.0, alpha: 0.9)
+        let cardBgColor = NSColor(white: 1.0, alpha: 0.06)
+        let legendTextColor = NSColor(white: 1.0, alpha: 0.45)
+        let dayLabelColor = NSColor(white: 1.0, alpha: 0.35)
+        let toolNameColor = NSColor(white: 1.0, alpha: 0.85)
+        let countColor = NSColor(white: 1.0, alpha: 0.45)
+        let barTrackColor = NSColor(white: 1.0, alpha: 0.06)
+        let noDataColor = NSColor(white: 1.0, alpha: 0.3)
+        let infoColor = NSColor(white: 1.0, alpha: 0.25)
+
+        func sectionTitle(_ text: String, _ yy: CGFloat) {
+            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
+            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
+            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            l.textColor = titleColor
+            view.addSubview(l)
+        }
+
+        func statCard(x: CGFloat, y yy: CGFloat, w: CGFloat, title: String, value: String, color: NSColor) {
+            let card = NSView(frame: NSRect(x: x, y: yy, width: w, height: 72))
+            card.wantsLayer = true
+            card.layer?.backgroundColor = cardBgColor.cgColor
+            card.layer?.cornerRadius = 8
+            let accent = NSView(frame: NSRect(x: 0, y: 69, width: w, height: 3))
+            accent.wantsLayer = true
+            accent.layer?.backgroundColor = color.cgColor
+            card.addSubview(accent)
+            let tl = NSTextField(frame: NSRect(x: 12, y: 44, width: w - 24, height: 18))
+            tl.isEditable = false; tl.isBordered = false; tl.backgroundColor = .clear
+            tl.stringValue = title; tl.font = NSFont.systemFont(ofSize: 11)
+            tl.textColor = cardTitleColor
+            card.addSubview(tl)
+            let vl = NSTextField(frame: NSRect(x: 12, y: 8, width: w - 24, height: 32))
+            vl.isEditable = false; vl.isBordered = false; vl.backgroundColor = .clear
+            vl.stringValue = value; vl.font = NSFont.systemFont(ofSize: 22, weight: .bold)
+            vl.textColor = cardValueColor
+            card.addSubview(vl)
+            view.addSubview(card)
+        }
+
+        sectionTitle("今日概览", y); y += 28
+
+        let fmtDur = formatDuration(stats.duration)
+        let cardW: CGFloat = (cw - 20) / 2
+        statCard(x: 16, y: y, w: cardW, title: "使用时长", value: fmtDur, color: NSColor(red: 0.04, green: 0.52, blue: 1.0, alpha: 1.0))
+        statCard(x: 16 + cardW + 8, y: y, w: cardW, title: "工具调用", value: "\(stats.toolCalls) 次", color: NSColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1.0))
+        y += 80
+        statCard(x: 16, y: y, w: cardW, title: "会话数", value: "\(stats.sessions) 个", color: NSColor(red: 1.0, green: 0.62, blue: 0.04, alpha: 1.0))
+        statCard(x: 16 + cardW + 8, y: y, w: cardW, title: "状态", value: appDelegate.currentStateName, color: NSColor(red: 0.75, green: 0.35, blue: 0.95, alpha: 1.0))
+        y += 88
+
+        // --- 状态分布 ---
+        sectionTitle("状态分布", y); y += 24
+        let totalDur = stats.thinkingDur + stats.workingDur + stats.idleDur
+        let thinkPct = totalDur > 0 ? stats.thinkingDur / totalDur : 0
+        let workPct = totalDur > 0 ? stats.workingDur / totalDur : 0
+        let idlePct = totalDur > 0 ? stats.idleDur / totalDur : 0
+
+        let barView = NSView(frame: NSRect(x: 16, y: y, width: cw, height: 28))
+        barView.wantsLayer = true
+        barView.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        barView.layer?.cornerRadius = 6
+        barView.layer?.masksToBounds = true
+
+        let thinkBar = NSView(frame: NSRect(x: 0, y: 0, width: cw * CGFloat(thinkPct), height: 28))
+        thinkBar.wantsLayer = true
+        thinkBar.layer?.backgroundColor = NSColor(red: 1.0, green: 0.62, blue: 0.04, alpha: 0.8).cgColor
+        barView.addSubview(thinkBar)
+
+        let workBar = NSView(frame: NSRect(x: cw * CGFloat(thinkPct), y: 0, width: cw * CGFloat(workPct), height: 28))
+        workBar.wantsLayer = true
+        workBar.layer?.backgroundColor = NSColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 0.8).cgColor
+        barView.addSubview(workBar)
+
+        let idleBar = NSView(frame: NSRect(x: cw * CGFloat(thinkPct + workPct), y: 0, width: cw * CGFloat(idlePct), height: 28))
+        idleBar.wantsLayer = true
+        idleBar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.08).cgColor
+        barView.addSubview(idleBar)
+        view.addSubview(barView)
+        y += 36
+
+        func legendDot(x: CGFloat, y yy: CGFloat, color: NSColor, text: String) {
+            let dot = NSView(frame: NSRect(x: x, y: yy + 2, width: 8, height: 8))
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = color.cgColor
+            dot.layer?.cornerRadius = 4
+            view.addSubview(dot)
+            let l = NSTextField(frame: NSRect(x: x + 12, y: yy, width: 120, height: 16))
+            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
+            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 11)
+            l.textColor = legendTextColor
+            view.addSubview(l)
+        }
+        let legendY = y
+        legendDot(x: 16, y: legendY, color: NSColor(red: 1.0, green: 0.62, blue: 0.04, alpha: 1.0), text: "思考 \(formatDuration(stats.thinkingDur))")
+        legendDot(x: 145, y: legendY, color: NSColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1.0), text: "执行 \(formatDuration(stats.workingDur))")
+        legendDot(x: 274, y: legendY, color: NSColor(white: 1.0, alpha: 0.2), text: "空闲 \(formatDuration(stats.idleDur))")
+        y += 28
+
+        // --- 本周趋势 ---
+        sectionTitle("本周趋势", y); y += 24
+        let chartH: CGFloat = 120
+        let chartView = NSView(frame: NSRect(x: 16, y: y, width: cw, height: chartH))
+        let colW = cw / 7
+        let dayLabels = ["一", "二", "三", "四", "五", "六", "日"]
+        let maxDur = weekData.map { $0.duration }.max() ?? 1
+        let todayStr = { () -> String in
+            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: Date())
+        }()
+
+        for i in 0..<7 {
+            let d = weekData[i]
+            let cx = CGFloat(i) * colW + colW / 2
+            let barMaxH = chartH - 24
+            let barH = max(d.duration > 0 ? CGFloat(d.duration / maxDur) * barMaxH : 4, 4)
+            let isToday = (d.date == todayStr)
+
+            if d.duration > 0 {
+                let vl = NSTextField(frame: NSRect(x: CGFloat(i) * colW + 2, y: chartH - 14, width: colW - 4, height: 14))
+                vl.isEditable = false; vl.isBordered = false; vl.backgroundColor = .clear
+                vl.stringValue = formatDuration(d.duration); vl.font = NSFont.systemFont(ofSize: 9)
+                vl.textColor = NSColor(white: 1.0, alpha: 0.35); vl.alignment = .center
+                chartView.addSubview(vl)
+            }
+
+            let bar = NSView(frame: NSRect(x: cx - 10, y: chartH - 18 - barH, width: 20, height: barH))
+            bar.wantsLayer = true
+            bar.layer?.cornerRadius = 3
+            if isToday {
+                bar.layer?.backgroundColor = NSColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 0.8).cgColor
+            } else if d.duration > 0 {
+                bar.layer?.backgroundColor = NSColor(red: 0.04, green: 0.52, blue: 1.0, alpha: 0.6).cgColor
+            } else {
+                bar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+            }
+            chartView.addSubview(bar)
+
+            let dl = NSTextField(frame: NSRect(x: CGFloat(i) * colW + 2, y: 0, width: colW - 4, height: 16))
+            dl.isEditable = false; dl.isBordered = false; dl.backgroundColor = .clear
+            dl.stringValue = dayLabels[i]; dl.font = NSFont.systemFont(ofSize: 10)
+            dl.alignment = .center
+            dl.textColor = isToday ? NSColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1.0) : dayLabelColor
+            if isToday { dl.font = NSFont.systemFont(ofSize: 10, weight: .semibold) }
+            chartView.addSubview(dl)
+        }
+        view.addSubview(chartView)
+        y += chartH + 16
+
+        // --- 高频工具 TOP 5 ---
+        sectionTitle("高频工具", y); y += 24
+        let top5 = Array(stats.toolBreakdown.prefix(5))
+        if top5.isEmpty {
+            let nl = NSTextField(frame: NSRect(x: 16, y: y, width: cw, height: 20))
+            nl.isEditable = false; nl.isBordered = false; nl.backgroundColor = .clear
+            nl.stringValue = "暂无数据 — 开始使用 AI 后自动统计"; nl.font = NSFont.systemFont(ofSize: 12)
+            nl.textColor = noDataColor
+            view.addSubview(nl)
+            y += 28
+        } else {
+            for (tool, count) in top5 {
+                let row = NSView(frame: NSRect(x: 16, y: y, width: cw, height: 28))
+                let tl = NSTextField(frame: NSRect(x: 0, y: 4, width: 200, height: 20))
+                tl.isEditable = false; tl.isBordered = false; tl.backgroundColor = .clear
+                tl.stringValue = tool; tl.font = NSFont.systemFont(ofSize: 12)
+                tl.textColor = toolNameColor
+                row.addSubview(tl)
+                let maxCount = top5.first?.1 ?? 1
+                let ratio = CGFloat(count) / CGFloat(maxCount)
+                let barBg = NSView(frame: NSRect(x: 140, y: 8, width: 180, height: 12))
+                barBg.wantsLayer = true
+                barBg.layer?.backgroundColor = barTrackColor.cgColor
+                barBg.layer?.cornerRadius = 3
+                row.addSubview(barBg)
+                let barFill = NSView(frame: NSRect(x: 140, y: 8, width: 180 * ratio, height: 12))
+                barFill.wantsLayer = true
+                barFill.layer?.backgroundColor = NSColor(red: 0.04, green: 0.52, blue: 1.0, alpha: 0.5).cgColor
+                barFill.layer?.cornerRadius = 3
+                row.addSubview(barFill)
+                let cl = NSTextField(frame: NSRect(x: 340, y: 4, width: 60, height: 20))
+                cl.isEditable = false; cl.isBordered = false; cl.backgroundColor = .clear
+                cl.stringValue = "\(count) 次"; cl.font = NSFont.systemFont(ofSize: 11)
+                cl.textColor = countColor; cl.alignment = .right
+                row.addSubview(cl)
+                view.addSubview(row)
+                y += 32
+            }
+        }
+
+        // --- 底部信息 ---
+        y += 8
+        let info = NSTextField(frame: NSRect(x: 16, y: y, width: cw, height: 16))
+        info.isEditable = false; info.isBordered = false; info.backgroundColor = .clear
+        info.stringValue = "数据保留 30 天 · 自动清理 · 仅本地存储"; info.font = NSFont.systemFont(ofSize: 10)
+        info.textColor = infoColor
+        view.addSubview(info)
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let h = Int(seconds) / 3600
+        let m = Int(seconds) % 3600 / 60
+        let s = Int(seconds) % 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m \(s)s" }
+        return "\(s)s"
+    }
+
     // MARK: - Sidebar Button Handler
 
     @objc func sidebarButtonClicked(_ sender: NSButton) {
         let row = sender.tag
+        let isStatsTab = (row == sidebarItems.count - 1)
         for (i, c) in containers.enumerated() {
             c.isHidden = (i != row)
         }
@@ -2496,9 +2730,26 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             btn.contentTintColor = isSelected ? NSColor.controlAccentColor : NSColor.labelColor
             btn.layer?.backgroundColor = isSelected ? NSColor.controlAccentColor.withAlphaComponent(0.1).cgColor : nil
         }
+        statsRefreshTimer?.invalidate()
+        if isStatsTab {
+            rebuildStatsTab()
+            statsRefreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+                self?.rebuildStatsTab()
+            }
+        }
     }
 
-    func windowWillClose(_ notification: Notification) { appDelegate.settingsWindowController = nil }
+    private func rebuildStatsTab() {
+        guard let scroll = statsContainer.subviews.first as? NSScrollView,
+              let docView = scroll.documentView else { return }
+        docView.subviews.forEach { $0.removeFromSuperview() }
+        buildStatsTab(docView, appDelegate.config)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        statsRefreshTimer?.invalidate()
+        appDelegate.settingsWindowController = nil
+    }
 }
 
 // ============================================================
