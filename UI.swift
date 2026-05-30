@@ -951,3 +951,171 @@ class RealTrafficLightView: NSView {
         }
     }
 }
+
+// ============================================================
+// TimelineView — 今日工作状态时间线
+// ============================================================
+
+struct TimelineEntry {
+    let timestamp: Double
+    let state: String
+    let message: String
+    let sessionId: String
+}
+
+class TimelineView: NSView {
+    var entries: [TimelineEntry] = [] {
+        didSet { needsDisplay = true }
+    }
+    var scrollView: NSScrollView?
+    var summaryLabel: NSTextField?
+
+    private let stateColors: [String: NSColor] = [
+        "working": NSColor(red: 0.85, green: 0.22, blue: 0.22, alpha: 1),
+        "fixing": NSColor(red: 1.0, green: 0.75, blue: 0.0, alpha: 1),
+        "thinking": NSColor(red: 1.0, green: 0.85, blue: 0.0, alpha: 1),
+        "error": NSColor(red: 0.9, green: 0.15, blue: 0.15, alpha: 1),
+        "waiting": NSColor(red: 0.75, green: 0.3, blue: 0.85, alpha: 1),
+        "idle": NSColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 0.4),
+    ]
+    private let stateLabels: [String: String] = [
+        "idle": "空闲", "thinking": "思考", "working": "执行",
+        "fixing": "修复", "error": "错误", "waiting": "等待",
+    ]
+
+    override func draw(_ dirtyRect: NSRect) {
+        let bg = NSColor(white: 0.12, alpha: 1.0)
+        bg.setFill()
+        dirtyRect.fill()
+
+        guard !entries.isEmpty else {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            NSAttributedString(string: "暂无今日工作记录", attributes: attrs)
+                .draw(at: NSPoint(x: frame.width / 2 - 60, y: frame.height / 2))
+            return
+        }
+
+        let w = frame.width
+        let topPad: CGFloat = 44
+        let bottomPad: CGFloat = 30
+        let leftPad: CGFloat = 60
+        let rightPad: CGFloat = 20
+        let chartH = frame.height - topPad - bottomPad
+        let chartW = w - leftPad - rightPad
+
+        // 计算24小时时间轴
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date())
+        let daySeconds: Double = 86400
+
+        // 绘制时间网格
+        let gridColor = NSColor(white: 0.25, alpha: 0.6)
+        let labelAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
+            .foregroundColor: NSColor(white: 0.5, alpha: 1)
+        ]
+        for h in 0...24 {
+            let x = leftPad + CGFloat(h) / 24.0 * chartW
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: x, y: topPad))
+            path.line(to: NSPoint(x: x, y: topPad + chartH))
+            gridColor.setStroke()
+            path.lineWidth = (h % 6 == 0) ? 0.8 : 0.3
+            path.stroke()
+            if h % 2 == 0 {
+                NSAttributedString(string: String(format: "%02d:00", h), attributes: labelAttrs)
+                    .draw(at: NSPoint(x: x - 16, y: 8))
+            }
+        }
+
+        // 横轴线
+        let axisPath = NSBezierPath()
+        axisPath.move(to: NSPoint(x: leftPad, y: topPad))
+        axisPath.line(to: NSPoint(x: leftPad + chartW, y: topPad))
+        NSColor(white: 0.4, alpha: 1).setStroke()
+        axisPath.lineWidth = 1
+        axisPath.stroke()
+
+        // 绘制状态条（每个entry画一条水平色带）
+        let barH: CGFloat = max(chartH - 10, 20)
+        let barY = topPad + 5
+
+        // 聚合连续相同状态的区间
+        var segments: [(start: Double, end: Double, state: String)] = []
+        for (i, entry) in entries.enumerated() {
+            let startOffset = max(entry.timestamp - todayStart.timeIntervalSince1970, 0)
+            let endOffset: Double
+            if i + 1 < entries.count {
+                endOffset = entries[i + 1].timestamp - todayStart.timeIntervalSince1970
+            } else {
+                endOffset = min(Date().timeIntervalSince1970 - todayStart.timeIntervalSince1970, daySeconds)
+            }
+            if startOffset >= daySeconds { continue }
+            let clampedEnd = min(endOffset, daySeconds)
+            if !segments.isEmpty && segments.last!.state == entry.state && abs(segments.last!.end - startOffset) < 1 {
+                segments[segments.count - 1].end = clampedEnd
+            } else {
+                segments.append((start: startOffset, end: clampedEnd, state: entry.state))
+            }
+        }
+
+        for seg in segments {
+            let x1 = leftPad + CGFloat(seg.start / daySeconds) * chartW
+            let x2 = leftPad + CGFloat(seg.end / daySeconds) * chartW
+            guard x2 - x1 > 0.3 else { continue }
+            let color = stateColors[seg.state] ?? NSColor.gray
+            let rect = NSRect(x: x1, y: barY, width: x2 - x1, height: barH)
+            let bp = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
+            color.setFill()
+            bp.fill()
+        }
+
+        // 标题和统计
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white
+        ]
+        let stats = computeStats()
+        let titleStr = "今日 AI 工作时间线 — 工作 \(stats.workMins)分钟 / 思考 \(stats.thinkMins)分钟"
+        NSAttributedString(string: titleStr, attributes: titleAttrs)
+            .draw(at: NSPoint(x: leftPad, y: topPad + barH + 8))
+
+        // 右上角图例
+        let legends: [(String, NSColor)] = [("执行", stateColors["working"]!), ("思考", stateColors["thinking"]!), ("修复", stateColors["fixing"]!), ("空闲", stateColors["idle"]!)]
+        var lx = w - rightPad
+        let ly = topPad - 16
+        let legAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor(white: 0.7, alpha: 1)
+        ]
+        for (label, color) in legends.reversed() {
+            let tw = label.size(withAttributes: legAttrs).width
+            lx -= tw + 14
+            color.setFill()
+            NSRect(x: lx, y: ly + 2, width: 8, height: 8).fill()
+            NSAttributedString(string: label, attributes: legAttrs).draw(at: NSPoint(x: lx + 11, y: ly))
+        }
+    }
+
+    struct Stats { var workMins: Int = 0, thinkMins: Int = 0, fixMins: Int = 0, idleMins: Int = 0 }
+
+    func computeStats() -> Stats {
+        var s = Stats()
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date()).timeIntervalSince1970
+        for (i, entry) in entries.enumerated() {
+            let start = max(entry.timestamp - todayStart, 0)
+            let end: Double
+            if i + 1 < entries.count { end = entries[i + 1].timestamp - todayStart }
+            else { end = Date().timeIntervalSince1970 - todayStart }
+            let dur = max(end - start, 0)
+            switch entry.state {
+            case "working", "waiting": s.workMins += Int(dur / 60)
+            case "thinking": s.thinkMins += Int(dur / 60)
+            case "fixing": s.fixMins += Int(dur / 60)
+            default: s.idleMins += Int(dur / 60)
+            }
+        }
+        return s
+    }
+}

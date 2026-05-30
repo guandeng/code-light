@@ -4,8 +4,9 @@
 
 发版前必须完成以下检查项：
 
-1. **更新 README.md 版本号**
-   - 第 5 行下载徽章：`⬇️_下载-vX.Y.Z` 改为新版本号
+1. **更新版本号**（三处必须一致）
+   - **Info.plist** — `CFBundleVersion` 和 `CFBundleShortVersionString` 改为新版本号
+   - **README.md** — 第 5 行下载徽章：`⬇️_下载-vX.Y.Z` 改为新版本号
    - 检查 README 中是否有其他硬编码的版本引用
 
 2. **提交代码**

@@ -18,7 +18,7 @@ class LightServer {
     private let queue = DispatchQueue(label: "codelight.server", qos: .userInteractive)
     private var sessions: [String: SessionEntry] = [:]
     private var history: [HistoryEntry] = []
-    private let maxHistory = 100
+    private let maxHistory = 2000
     private let sessionTimeout: TimeInterval = 300
     private let deadTimeout: TimeInterval = 3600
     var onLog: ((String) -> Void)?
@@ -67,6 +67,12 @@ class LightServer {
     func stop() {
         listener?.cancel()
         listener = nil
+    }
+
+    func iterateHistory(_ block: (Double, String, String, String) -> Void) {
+        for h in history {
+            block(h.timestamp, h.state, h.message, h.session_id)
+        }
     }
 
     private func handleConnection(_ conn: NWConnection) {
@@ -329,8 +335,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var marqueeOffset: Int = 0
     var tooltipView: NSView?
     var settingsWindowController: SettingsWindowController?
+    var timelineWindowController: TimelineWindowController?
     var mouseDownMonitor: Any?
     var mouseUpMonitor: Any?
+    var mouseDragMonitor: Any?
+    var edgeSnapTimer: Timer?
+    var edgeSnapPending: String?  // "left" or "right" when snap is pending
+    var edgePreviewWindow: NSWindow?
     var sessions: [String: [String: Any]] = [:]
     var shellView: ShellView?
     var trafficContainer: TrafficLightContainer?
@@ -525,6 +536,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenu = NSMenu(title: "视图")
         viewMenu.addItem(withTitle: "显示/隐藏灯", action: #selector(toggleWindow), keyEquivalent: "t")
         viewMenu.addItem(withTitle: "切换显示模式", action: #selector(handleDoubleClick(_:)), keyEquivalent: "d")
+        viewMenu.addItem(NSMenuItem.separator())
+        viewMenu.addItem(withTitle: "今日工作时间线", action: #selector(openTimeline), keyEquivalent: "l")
         let viewMenuItem = NSMenuItem(); viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
@@ -596,6 +609,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(modeItem)
 
         menu.addItem(withTitle: "重置窗口位置", action: #selector(resetWindowPosition), keyEquivalent: "r")
+        menu.addItem(withTitle: "今日工作时间线", action: #selector(openTimeline), keyEquivalent: "l")
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "检查更新...", action: #selector(menuCheckForUpdate), keyEquivalent: "u")
         menu.addItem(withTitle: "GitHub", action: #selector(openGitHub), keyEquivalent: "")
@@ -744,14 +758,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         detail.drawsBackground = false
         bubbleView.addSubview(detail)
 
-        // 知道了按钮
-        let okBtn = NSButton(frame: NSRect(x: contentX, y: 20, width: bubbleW - 28, height: 28))
-        okBtn.bezelStyle = .rounded
-        let okAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor(white: 0.9, alpha: 1.0)]
-        okBtn.attributedTitle = NSAttributedString(string: "知道了", attributes: okAttrs)
-        okBtn.target = self
-        okBtn.action = #selector(okPermission)
-        bubbleView.addSubview(okBtn)
+        // 允许 + 拒绝 按钮
+        let btnW = (bubbleW - 36) / 2
+        let denyBtn = NSButton(frame: NSRect(x: contentX, y: 20, width: btnW, height: 28))
+        denyBtn.bezelStyle = .rounded
+        let denyAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.systemRed]
+        denyBtn.attributedTitle = NSAttributedString(string: "拒绝", attributes: denyAttrs)
+        denyBtn.target = self
+        denyBtn.action = #selector(denyPermission)
+        bubbleView.addSubview(denyBtn)
+
+        let allowBtn = NSButton(frame: NSRect(x: contentX + btnW + 8, y: 20, width: btnW, height: 28))
+        allowBtn.bezelStyle = .rounded
+        let allowAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.systemGreen]
+        allowBtn.attributedTitle = NSAttributedString(string: "允许", attributes: allowAttrs)
+        allowBtn.target = self
+        allowBtn.action = #selector(allowPermission)
+        bubbleView.addSubview(allowBtn)
 
         bubble.orderFront(nil)
         permissionBubbleWindow = bubble
@@ -827,7 +850,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defaultY = screen.height - lightH - 80
         }
         var posX: CGFloat = isEdgeBar ? defaultX : (config.windowX ?? defaultX)
-        var posY: CGFloat = config.windowY ?? defaultY
+        var posY: CGFloat = isEdgeBar ? defaultY : (config.windowY ?? defaultY)
 
         // 确保窗口完全在屏幕可见区域内
         if !isEdgeBar {
@@ -981,40 +1004,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: lightWindow, queue: .main) { [weak self] _ in
             guard let self = self, let w = self.lightWindow else { return }
             guard !self.isRebuilding else { return }
-            // 拖动中只记录位置，不做磁吸判断
+            // 拖动中检测边缘停留
             if self.isDragging {
-                self.config.windowX = Double(w.frame.origin.x)
-                self.config.windowY = Double(w.frame.origin.y)
+                let wf = w.frame
+                let midX = wf.midX
+                let screen = NSScreen.screens.first { midX >= $0.frame.minX && midX <= $0.frame.maxX } ?? NSScreen.main
+                guard let sf = screen?.frame else { return }
+                let snap: CGFloat = 20
+
+                if wf.minX - sf.minX < snap {
+                    self.startEdgeSnapTimer(side: "left", screenFrame: sf)
+                } else if sf.maxX - wf.maxX < snap {
+                    self.startEdgeSnapTimer(side: "right", screenFrame: sf)
+                } else {
+                    self.cancelEdgeSnap()
+                }
                 return
             }
-            let wf = w.frame
-            let midX = wf.midX
-            let screen = NSScreen.screens.first { midX >= $0.frame.minX && midX <= $0.frame.maxX } ?? NSScreen.main
-            guard let sf = screen?.frame else { return }
-            let snap: CGFloat = 20
-
-            var newEdgeBar: String? = self.config.edgeBar
-
-            if wf.minX - sf.minX < snap {
-                newEdgeBar = "left"
-            } else if sf.maxX - wf.maxX < snap {
-                newEdgeBar = "right"
-            } else if self.config.edgeBar != nil {
-                newEdgeBar = nil
-            }
-
-            if newEdgeBar != self.config.edgeBar {
-                self.config.edgeBar = newEdgeBar
-                self.config.windowX = Double(wf.midX)
-                self.config.windowY = Double(wf.midY)
-                self.config.save()
-                self.buildLightWindow()
-                return
-            }
-
-            // 记录位置
-            self.config.windowX = Double(wf.origin.x)
-            self.config.windowY = Double(wf.origin.y)
+            // 非拖动（编程移动），直接记录位置
+            self.config.windowX = Double(w.frame.origin.x)
+            self.config.windowY = Double(w.frame.origin.y)
             self.config.save()
         }
 
@@ -1032,34 +1041,99 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return event }
             if self.isDragging {
                 self.isDragging = false
-                guard let w = self.lightWindow else { return event }
-                let wf = w.frame
-                let midX = wf.midX
-                let screen = NSScreen.screens.first { midX >= $0.frame.minX && midX <= $0.frame.maxX } ?? NSScreen.main
-                guard let sf = screen?.frame else { return event }
-                let snap: CGFloat = 20
-                var newEdgeBar: String? = self.config.edgeBar
-                if wf.minX - sf.minX < snap {
-                    newEdgeBar = "left"
-                } else if sf.maxX - wf.maxX < snap {
-                    newEdgeBar = "right"
-                } else if self.config.edgeBar != nil {
-                    newEdgeBar = nil
-                }
-                if newEdgeBar != self.config.edgeBar {
-                    self.config.edgeBar = newEdgeBar
-                    self.config.windowX = Double(wf.midX)
-                    self.config.windowY = Double(wf.midY)
+                if let pending = self.edgeSnapPending {
+                    self.config.edgeBar = pending
+                    self.config.displayMode = "edgebar"
+                    self.config.horizontal = false
+                    self.config.windowX = Double(self.lightWindow?.frame.midX ?? 0)
+                    self.config.windowY = Double(self.lightWindow?.frame.midY ?? 0)
                     self.config.save()
                     self.buildLightWindow()
+                    self.startTimers()
+                    self.pollState()
+                    self.cancelEdgeSnap()
+                    self.settingsWindowController?.syncFromConfig()
                 } else {
-                    self.config.windowX = Double(wf.origin.x)
-                    self.config.windowY = Double(wf.origin.y)
-                    self.config.save()
+                    // 从边缘栏拖出来：超过边缘栏宽度 → 恢复竖向；否则弹回边缘栏
+                    if self.config.edgeBar != nil {
+                        let wf = self.lightWindow?.frame ?? .zero
+                        let midX = wf.midX
+                        let screen = NSScreen.screens.first { midX >= $0.frame.minX && midX <= $0.frame.maxX } ?? NSScreen.main
+                        let sf = screen?.frame ?? .zero
+                        let edgeWidth: CGFloat = 20
+                        let fromLeft = self.config.edgeBar == "left"
+                        let dist = fromLeft ? (wf.minX - sf.minX) : (sf.maxX - wf.maxX)
+
+                        if abs(dist) > edgeWidth {
+                            // 拖离边缘够远 → 恢复竖向
+                            self.config.edgeBar = nil
+                            self.config.displayMode = "vertical"
+                            self.config.horizontal = false
+                            self.config.windowX = Double(wf.origin.x)
+                            self.config.windowY = Double(wf.origin.y)
+                            self.config.save()
+                            self.cancelEdgeSnap()
+                            self.buildLightWindow(); self.startTimers(); self.pollState()
+                            self.settingsWindowController?.syncFromConfig()
+                        } else {
+                            // 拖得不够 → 弹回边缘栏
+                            self.config.windowX = Double(wf.origin.x)
+                            self.config.windowY = Double(wf.origin.y)
+                            self.config.save()
+                            self.buildLightWindow(); self.startTimers(); self.pollState()
+                        }
+                    } else {
+                        self.config.windowX = Double(self.lightWindow?.frame.origin.x ?? 0)
+                        self.config.windowY = Double(self.lightWindow?.frame.origin.y ?? 0)
+                        self.config.save()
+                    }
                 }
             }
             return event
         }
+    }
+
+    // MARK: - 边缘吸附（停留 0.5s 触发预览，松手确认）
+
+    func startEdgeSnapTimer(side: String, screenFrame: NSRect) {
+        guard edgeSnapPending != side else { return }  // 已经在计时
+        cancelEdgeSnap()
+        edgeSnapPending = side
+        edgeSnapTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.showEdgePreview(side: side, screenFrame: screenFrame)
+        }
+    }
+
+    func cancelEdgeSnap() {
+        edgeSnapTimer?.invalidate()
+        edgeSnapTimer = nil
+        edgeSnapPending = nil
+        edgePreviewWindow?.close()
+        edgePreviewWindow = nil
+    }
+
+    func showEdgePreview(side: String, screenFrame: NSRect) {
+        edgePreviewWindow?.close()
+        let barWidth: CGFloat = 12
+        let barHeight = screenFrame.height * 0.5
+        let x = (side == "left") ? screenFrame.minX : screenFrame.maxX - barWidth
+        let y = screenFrame.midY - barHeight / 2
+        let preview = NSPanel(
+            contentRect: NSRect(x: x, y: y, width: barWidth, height: barHeight),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered, defer: false
+        )
+        preview.isOpaque = false
+        preview.backgroundColor = .clear
+        preview.level = .floating
+        preview.hasShadow = false
+        let view = preview.contentView!
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 0.3).cgColor
+        view.layer?.cornerRadius = 3
+        preview.makeKeyAndOrderFront(nil)
+        edgePreviewWindow = preview
     }
 
     func startTimers() {
@@ -1080,12 +1154,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         config.edgeBar = (config.displayMode == "edgebar") ? (config.edgeBar ?? "right") : nil
         config.save()
         rebuildWithCurrentConfig()
+        settingsWindowController?.syncFromConfig()
     }
     @objc func openSettings() {
         if settingsWindowController == nil { settingsWindowController = SettingsWindowController(appDelegate: self) }
         settingsWindowController?.syncFromConfig()
         settingsWindowController?.window?.center()
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func openTimeline() {
+        if timelineWindowController == nil { timelineWindowController = TimelineWindowController(appDelegate: self) }
+        timelineWindowController?.loadHistory()
+        timelineWindowController?.window?.center()
+        timelineWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
     @objc func quitApp() { NSApp.terminate(nil) }
@@ -1104,6 +1187,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let menu = (statusItem?.menu?.items.first { $0.submenu?.title == "显示样式" })?.submenu {
             for item in menu.items { item.state = (item.tag == sender.tag) ? .on : .off }
         }
+        settingsWindowController?.syncFromConfig()
     }
 
     @objc func menuCheckForUpdate() {
@@ -1197,7 +1281,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 只有非 idle 状态才高频更新（闪烁/呼吸/吉祥物动画）
         // idle 状态每 25 帧（~1.25s）更新一次吉祥物即可
         // Mini 模式 idle 状态完全跳过动画
-        let isMiniIdle = config.displayMode == "mini" && state == "idle"
+        let isMiniIdle = config.displayMode == "mini" && config.edgeBar == nil && state == "idle"
         let needsAnim = isMiniIdle ? false : (state != "idle" || Int(animPhase * 100) % 25 == 0)
         if needsAnim {
             redView.mascotPhase = animPhase
@@ -1208,8 +1292,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         yellowView.tickMascotFade()
         greenView.tickMascotFade()
 
-        // Mini 模式：单灯颜色随状态切换
-        if config.displayMode == "mini" {
+        // Mini 模式：单灯颜色随状态切换（边缘栏用三色，不走这个分支）
+        if config.displayMode == "mini" && config.edgeBar == nil {
+            // 只有纯迷你模式才走单灯分支
             let miniColors: [String: NSColor] = [
                 "idle": NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0),
                 "thinking": NSColor(red: 1.0, green: 0.92, blue: 0.0, alpha: 1.0),
@@ -1285,7 +1370,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "error": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0),
         ]
         let activeColor = stateColors[state] ?? stateColors["idle"]!
-        if config.displayMode == "mini" {
+        if config.displayMode == "mini" && config.edgeBar == nil {
             lightWindow.contentView?.layer?.borderColor = activeColor.withAlphaComponent(0.5).cgColor
             lightWindow.contentView?.layer?.borderWidth = 2.5
         }
@@ -1355,7 +1440,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
                 let s = STATES[sn] ?? STATES["idle"]!
-                if self.config.displayMode != "mini" {
+                if self.config.displayMode != "mini" || self.config.edgeBar != nil {
                     if !blink {
                         self.redView.isOn = s.red
                         self.yellowView.isOn = s.yellow
@@ -1443,6 +1528,59 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
 class FlippedView: NSView {
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+// ============================================================
+// TimelineWindowController — 今日工作状态时间线窗口
+// ============================================================
+
+class TimelineWindowController: NSWindowController, NSWindowDelegate {
+    let appDelegate: AppDelegate
+    var timelineView: TimelineView!
+
+    init(appDelegate: AppDelegate) {
+        self.appDelegate = appDelegate
+        let rect = NSRect(x: 0, y: 0, width: 680, height: 260)
+        let win = NSWindow(contentRect: rect, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        win.title = "今日 AI 工作时间线"
+        win.minSize = NSSize(width: 500, height: 200)
+        win.isReleasedWhenClosed = false
+        win.backgroundColor = NSColor(white: 0.12, alpha: 1)
+        win.titlebarAppearsTransparent = true
+        win.titleVisibility = .hidden
+        win.level = .floating
+        super.init(window: win)
+        win.delegate = self
+        buildContent()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func buildContent() {
+        guard let cv = window?.contentView else { return }
+        timelineView = TimelineView(frame: cv.bounds)
+        timelineView.autoresizingMask = [.width, .height]
+        cv.addSubview(timelineView)
+        loadHistory()
+    }
+
+    func loadHistory() {
+        guard let server = appDelegate.lightServer else { return }
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date()).timeIntervalSince1970
+        var items: [TimelineEntry] = []
+        // 通过反射访问 history（同进程）
+        server.iterateHistory { ts, state, msg, sid in
+            if ts >= todayStart {
+                items.append(TimelineEntry(timestamp: ts, state: state, message: msg, sessionId: sid))
+            }
+        }
+        timelineView.entries = items
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        loadHistory()
+    }
 }
 
 class SettingsWindowController: NSWindowController, NSWindowDelegate {
@@ -1628,19 +1766,6 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         versionLabel.textColor = NSColor.tertiaryLabelColor
         versionLabel.stringValue = "CodeLight v\(ver)"
         bottomBar.addSubview(versionLabel)
-
-        let checkUpdateBtn = NSButton(frame: NSRect(x: 300, y: 14, width: 80, height: 22))
-        checkUpdateBtn.title = "检查更新"; checkUpdateBtn.bezelStyle = .inline
-        checkUpdateBtn.font = NSFont.systemFont(ofSize: 11)
-        checkUpdateBtn.target = self; checkUpdateBtn.action = #selector(checkForUpdate)
-        bottomBar.addSubview(checkUpdateBtn)
-
-        updateStatusLabel = NSTextField(frame: NSRect(x: 20, y: -2, width: 400, height: 16))
-        updateStatusLabel.isEditable = false; updateStatusLabel.isBordered = false; updateStatusLabel.backgroundColor = .clear
-        updateStatusLabel.font = NSFont.systemFont(ofSize: 10)
-        updateStatusLabel.textColor = NSColor.secondaryLabelColor
-        updateStatusLabel.stringValue = ""
-        bottomBar.addSubview(updateStatusLabel)
     }
 
     // MARK: - Section Builders
@@ -1691,7 +1816,19 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         pollLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
         pollLabel.isEditable = false; pollLabel.isBordered = false; pollLabel.backgroundColor = .clear
         pollLabel.stringValue = String(format: "%.1fs", c.pollInterval); pollLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(pollLabel)
+        view.addSubview(pollLabel); y += 36
+
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
+        let checkUpdateBtn = NSButton(frame: NSRect(x: rx, y: y + 2, width: 80, height: 24))
+        checkUpdateBtn.title = "检查更新"; checkUpdateBtn.bezelStyle = .rounded
+        checkUpdateBtn.font = NSFont.systemFont(ofSize: 11)
+        checkUpdateBtn.target = self; checkUpdateBtn.action = #selector(checkForUpdate)
+        view.addSubview(checkUpdateBtn)
+        updateStatusLabel = NSTextField(frame: NSRect(x: rx + 90, y: y + 4, width: 200, height: 20))
+        updateStatusLabel.isEditable = false; updateStatusLabel.isBordered = false; updateStatusLabel.backgroundColor = .clear
+        updateStatusLabel.font = NSFont.systemFont(ofSize: 11); updateStatusLabel.textColor = NSColor.tertiaryLabelColor
+        updateStatusLabel.stringValue = "v\(ver)"
+        view.addSubview(updateStatusLabel)
     }
 
     func buildAppearanceSection(_ view: NSView, _ c: AppConfig) {
@@ -1748,7 +1885,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         weatherCheck = NSButton(frame: NSRect(x: rx, y: y, width: 220, height: 24))
         weatherCheck.setButtonType(.switch); weatherCheck.title = "天气主题（实时天气背景）"
         weatherCheck.state = c.weatherThemeEnabled ? .on : .off
-        weatherCheck.target = self; weatherCheck.action = #selector(weatherToggled)
+        weatherCheck.target = self; weatherCheck.action = #selector(toggleInstant(_:))
         view.addSubview(weatherCheck); y += 24
 
         weatherStatusLabel = NSTextField(frame: NSRect(x: rx + 10, y: y + 4, width: 200, height: 16))
@@ -1811,6 +1948,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         showStatusCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         showStatusCheck.setButtonType(.switch); showStatusCheck.title = "显示底部状态文字"
         showStatusCheck.state = c.showStatusText ? .on : .off
+        showStatusCheck.target = self; showStatusCheck.action = #selector(toggleInstant(_:))
         view.addSubview(showStatusCheck)
     }
 
@@ -1831,11 +1969,13 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         autoLaunchCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         autoLaunchCheck.setButtonType(.switch); autoLaunchCheck.title = "开机自动启动"
         autoLaunchCheck.state = c.autoLaunch ? .on : .off
+        autoLaunchCheck.target = self; autoLaunchCheck.action = #selector(toggleInstant(_:))
         view.addSubview(autoLaunchCheck); y += 32
 
         notifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         notifyCheck.setButtonType(.switch); notifyCheck.title = "任务完成时发送通知"
         notifyCheck.state = c.notifyOnDone ? .on : .off
+        notifyCheck.target = self; notifyCheck.action = #selector(toggleInstant(_:))
         view.addSubview(notifyCheck); y += 32
 
         let soundLabel = NSTextField(labelWithString: "完成提示音:")
@@ -1850,16 +1990,19 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         permNotifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         permNotifyCheck.setButtonType(.switch); permNotifyCheck.title = "权限请求弹窗确认"
         permNotifyCheck.state = c.notifyOnPermission ? .on : .off
+        permNotifyCheck.target = self; permNotifyCheck.action = #selector(toggleInstant(_:))
         view.addSubview(permNotifyCheck); y += 32
 
         fullscreenCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         fullscreenCheck.setButtonType(.switch); fullscreenCheck.title = "全屏应用上层显示"
         fullscreenCheck.state = c.showOnFullscreen ? .on : .off
+        fullscreenCheck.target = self; fullscreenCheck.action = #selector(toggleInstant(_:))
         view.addSubview(fullscreenCheck); y += 32
 
         floatingCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
         floatingCheck.setButtonType(.switch); floatingCheck.title = "窗口悬浮置顶"
         floatingCheck.state = c.isFloating ? .on : .off
+        floatingCheck.target = self; floatingCheck.action = #selector(toggleInstant(_:))
         view.addSubview(floatingCheck)
     }
 
@@ -2158,7 +2301,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
         ]
         if appDelegate.config.notifyOnPermission {
-            let permCmd = "curl -s -X POST http://127.0.0.1:\(port)/api/permission -d \"$(cat)\" -H 'Content-Type: application/json' > /dev/null 2>&1 || true"
+            let permCmd = "curl -s -X POST http://127.0.0.1:\(port)/api/permission -d \"$(cat)\" -H 'Content-Type: application/json' | python3 -c \"import sys,json,urllib.request,time;rid=json.load(sys.stdin).get('id','');n=0\nwhile n<100:\n try:r2=json.loads(urllib.request.urlopen(f'http://127.0.0.1:\(port)/api/permission/'+rid+'/decision').read())\n except:break\n if r2.get('status')=='done':b=r2.get('decision',{}).get('decision','');print(json.dumps({'hookSpecificOutput':{'hookEventName':'PermissionRequest','decision':{'behavior':b}}}));break\n time.sleep(0.3);n+=1\" || true"
             hooks["PermissionRequest"] = [["matcher": "", "hooks": [["type": "command", "command": permCmd]]]]
         }
         return hooks
@@ -2179,11 +2322,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // --- Claude Code ---
         if claudeCodeCheck.state == .on {
             let path = home + "/.claude/settings.json"
-            let hooks: [String: Any] = [
-                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing $CLAUDE_TOOL_NAME\", \"session_id\": \"$CLAUDE_SESSION_ID\"}' || echo '{}'"]]]],
-                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"$CLAUDE_SESSION_ID\"}' || echo '{}'"]]]],
-                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"$CLAUDE_SESSION_ID\"}' || echo '{}'"]]]],
-            ]
+            let hooks = generateHooks(tool: "claude", port: port)
             let ok = writeHooksToFile(path: path, hooks: hooks, fm: fm)
             results.append(ok ? "✅ Claude Code" : "❌ Claude Code")
             appDelegate.log("[Hook] Claude Code: \(ok ? "ok" : "failed") \(path)")
@@ -2200,11 +2339,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             catch { codexOk = false; appDelegate.log("[Hook] Codex config.toml: \(error)") }
             // 2) hooks.json: hook 配置（格式与 Claude Code 一致）
             let hooksPath = dir + "/hooks.json"
-            let hooks: [String: Any] = [
-                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
-                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
-                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"codex\"}' || echo '{}'"]]]],
-            ]
+            let hooks = generateHooks(tool: "codex", port: port)
             if !writeHooksToFile(path: hooksPath, hooks: hooks, fm: fm) { codexOk = false }
             results.append(codexOk ? "✅ Codex" : "❌ Codex")
             appDelegate.log("[Hook] Codex: \(codexOk ? "ok" : "failed") \(dir)/config.toml + hooks.json")
@@ -2215,11 +2350,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             let dir = home + "/.cursor"
             if !fm.fileExists(atPath: dir) { try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true) }
             let path = dir + "/settings.json"
-            let hooks: [String: Any] = [
-                "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing $CURSOR_TOOL_NAME\", \"session_id\": \"$CURSOR_SESSION_ID\"}' || echo '{}'"]]]],
-                "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"$CURSOR_SESSION_ID\"}' || echo '{}'"]]]],
-                "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"$CURSOR_SESSION_ID\"}' || echo '{}'"]]]],
-            ]
+            let hooks = generateHooks(tool: "cursor", port: port)
             let ok = writeHooksToFile(path: path, hooks: hooks, fm: fm)
             results.append(ok ? "✅ Cursor" : "❌ Cursor")
             appDelegate.log("[Hook] Cursor: \(ok ? "ok" : "failed") \(path)")
@@ -2424,6 +2555,39 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         appDelegate.log("[天气预览] 切换到: \(preset.label)")
         weatherStatusLabel.stringValue = "\(preset.label) 点击继续切换 →"
         weatherStatusLabel.textColor = NSColor.controlAccentColor
+    }
+
+    @objc func toggleInstant(_ sender: NSButton) {
+        var c = appDelegate.config
+        if sender == weatherCheck {
+            c.weatherThemeEnabled = sender.state == .on
+            if c.weatherThemeEnabled {
+                weatherStatusLabel.stringValue = "获取天气中..."
+                WeatherManager.shared.onWeatherUpdate = { [weak self] condition, temp in
+                    self?.weatherStatusLabel.stringValue = "\(condition.displayName) \(Int(temp))°C"
+                }
+                WeatherManager.shared.startPolling()
+            } else {
+                WeatherManager.shared.stopPolling()
+                weatherStatusLabel.stringValue = ""
+            }
+        } else if sender == showStatusCheck {
+            c.showStatusText = sender.state == .on
+        } else if sender == autoLaunchCheck {
+            c.autoLaunch = sender.state == .on
+            if c.autoLaunch { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
+        } else if sender == notifyCheck {
+            c.notifyOnDone = sender.state == .on
+        } else if sender == permNotifyCheck {
+            c.notifyOnPermission = sender.state == .on
+        } else if sender == fullscreenCheck {
+            c.showOnFullscreen = sender.state == .on
+        } else if sender == floatingCheck {
+            c.isFloating = sender.state == .on
+        }
+        c.save()
+        appDelegate.config = c
+        appDelegate.restartWithNewConfig()
     }
 
     @objc func saveSettings() {
