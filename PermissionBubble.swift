@@ -67,7 +67,6 @@ extension AppDelegate {
     func showPermissionBubble(_ entry: [String: Any]) {
         guard config.notifyOnPermission else { return }
         guard let lightWindow = lightWindow else { return }
-        permissionBubbleWindow?.close()
 
         let id = entry["id"] as? String ?? ""
         let input = entry["input"] as? [String: Any] ?? [:]
@@ -76,30 +75,30 @@ extension AppDelegate {
         let command = toolInput["command"] as? String ?? toolInput["file_path"] as? String ?? ""
 
         // Switch to waiting state
-        permissionBubbleId = id
-        permissionToolName = toolName
-        permissionCommand = String(command.prefix(60))
         let sessionId = input["session_id"] as? String ?? "default"
         if let ls = lightServer {
             ls.updateState(name: "waiting", message: "permission: \(toolName)", sessionId: sessionId)
         }
 
-        let bubbleW: CGFloat = 280, bubbleH: CGFloat = 150
+        let bubbleW: CGFloat = 280, bubbleH: CGFloat = 150, bubbleGap: CGFloat = 8
         let tailW: CGFloat = 12
         let wf = lightWindow.frame
         let sf = NSScreen.main?.visibleFrame ?? NSScreen.screens[0].visibleFrame
         let screenMidX = sf.midX
         let winMidX = wf.midX
-        // 根据窗口在屏幕的哪一侧决定气泡方向
         let onRight = winMidX > screenMidX
-        let bx: CGFloat, by: CGFloat
+
+        // 堆叠偏移：已有几个气泡就往下移几个
+        let stackIndex = permissionBubbles.count
+        let yOffset = CGFloat(stackIndex) * (bubbleH + bubbleGap)
+
+        let bx: CGFloat
+        let by: CGFloat
         if onRight {
-            // 窗口在右半边，气泡在左侧，尾巴向右
-            by = wf.maxY - bubbleH
+            by = wf.maxY - bubbleH - yOffset
             bx = wf.minX - bubbleW - tailW - 4
         } else {
-            // 窗口在左半边，气泡在右侧，尾巴向左
-            by = wf.maxY - bubbleH
+            by = wf.maxY - bubbleH - yOffset
             bx = wf.maxX + 4
         }
         let totalW = onRight ? bubbleW + tailW : tailW + bubbleW
@@ -130,27 +129,29 @@ extension AppDelegate {
         bubbleView.addSubview(title)
 
         // Command detail
-        let detail = NSTextField(frame: NSRect(x: contentX, y: bubbleH - 96, width: bubbleW - 28, height: 56))
+        let detail = NSTextField(frame: NSRect(x: contentX, y: bubbleH - 102, width: bubbleW - 28, height: 62))
         detail.isEditable = false; detail.isBordered = false; detail.backgroundColor = .clear
         detail.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
         detail.textColor = NSColor(white: 0.6, alpha: 1.0)
-        detail.stringValue = String(command.prefix(200))
+        detail.stringValue = String(command.prefix(300))
         detail.lineBreakMode = .byCharWrapping
         detail.cell?.wraps = true
         detail.drawsBackground = false
         bubbleView.addSubview(detail)
 
-        // 气泡 tooltip 显示完整命令
-        bubbleView.toolTip = "\(toolName) 请求权限\n\n\(command)"
+        // 气泡 tooltip 显示完整命令（macOS tooltip 限制约 800 字符）
+        let shortCmd = command.count > 600 ? String(command.prefix(600)) + "…" : command
+        bubbleView.toolTip = "\(toolName) 请求权限\n\n\(shortCmd)"
 
-        // 允许 + 拒绝 按钮
+        // 允许 + 拒绝 按钮（用 identifier 存 permission id，不依赖数组索引）
         let btnW = (bubbleW - 36) / 2
         let denyBtn = NSButton(frame: NSRect(x: contentX, y: 20, width: btnW, height: 28))
         denyBtn.bezelStyle = .rounded
         let denyAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.systemRed]
         denyBtn.attributedTitle = NSAttributedString(string: "拒绝", attributes: denyAttrs)
         denyBtn.target = self
-        denyBtn.action = #selector(denyPermission)
+        denyBtn.action = #selector(denyPermission(_:))
+        denyBtn.identifier = NSUserInterfaceItemIdentifier("deny:\(id)")
         bubbleView.addSubview(denyBtn)
 
         let allowBtn = NSButton(frame: NSRect(x: contentX + btnW + 8, y: 20, width: btnW, height: 28))
@@ -158,39 +159,59 @@ extension AppDelegate {
         let allowAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.systemGreen]
         allowBtn.attributedTitle = NSAttributedString(string: "允许", attributes: allowAttrs)
         allowBtn.target = self
-        allowBtn.action = #selector(allowPermission)
+        allowBtn.action = #selector(allowPermission(_:))
+        allowBtn.identifier = NSUserInterfaceItemIdentifier("allow:\(id)")
         bubbleView.addSubview(allowBtn)
 
         bubble.orderFront(nil)
-        permissionBubbleWindow = bubble
-    }
 
-    func dismissPermissionBubble() {
-        permissionBubbleWindow?.close()
-        permissionBubbleWindow = nil
-        permissionBubbleId = nil
-        permissionAlwaysCheck = nil
-        permissionToolName = nil
-        permissionCommand = nil
-    }
-
-    @objc func okPermission() {
-        dismissPermissionBubble()
-    }
-
-    @objc func denyPermission() {
-        guard let id = permissionBubbleId, !id.isEmpty else { return }
-        lightServer?.setPermissionDecision(id: id, behavior: "deny")
-        dismissPermissionBubble()
-    }
-
-    @objc func allowPermission() {
-        guard let id = permissionBubbleId, !id.isEmpty else { return }
-        var rule: [String: Any]? = nil
-        if permissionAlwaysCheck?.tag == 1 {
-            rule = ["toolName": permissionToolName ?? "", "ruleContent": permissionCommand ?? ""]
+        // 35 秒超时自动关闭（hook 命令轮询 30 秒超时，多给 5 秒缓冲）
+        let permId = id
+        let timeout = Timer.scheduledTimer(withTimeInterval: 35, repeats: false) { [weak self] _ in
+            self?.dismissPermissionBubble(id: permId)
         }
-        lightServer?.setPermissionDecision(id: id, behavior: "allow", addRule: rule)
-        dismissPermissionBubble()
+        permissionBubbles.append((id: id, window: bubble, toolName: toolName, command: String(command.prefix(60)), timer: timeout))
+    }
+
+    func dismissPermissionBubble(id: String) {
+        guard let idx = permissionBubbles.firstIndex(where: { $0.id == id }) else { return }
+        permissionBubbles[idx].timer?.invalidate()
+        permissionBubbles[idx].window.close()
+        permissionBubbles.remove(at: idx)
+        relayoutPermissionBubbles()
+    }
+
+    func dismissAllPermissionBubbles() {
+        for b in permissionBubbles { b.timer?.invalidate(); b.window.close() }
+        permissionBubbles.removeAll()
+    }
+
+    private func relayoutPermissionBubbles() {
+        guard let lightWindow = lightWindow else { return }
+        let bubbleH: CGFloat = 150, bubbleGap: CGFloat = 8
+        let wf = lightWindow.frame
+        let sf = NSScreen.main?.visibleFrame ?? NSScreen.screens[0].visibleFrame
+        let onRight = wf.midX > sf.midX
+
+        for (i, b) in permissionBubbles.enumerated() {
+            let yOffset = CGFloat(i) * (bubbleH + bubbleGap)
+            var frame = b.window.frame
+            frame.origin.y = wf.maxY - bubbleH - yOffset
+            b.window.setFrame(frame, display: true)
+        }
+    }
+
+    @objc func denyPermission(_ sender: NSButton) {
+        guard let ident = sender.identifier?.rawValue, ident.hasPrefix("deny:") else { return }
+        let id = String(ident.dropFirst(5))
+        lightServer?.setPermissionDecision(id: id, behavior: "deny")
+        dismissPermissionBubble(id: id)
+    }
+
+    @objc func allowPermission(_ sender: NSButton) {
+        guard let ident = sender.identifier?.rawValue, ident.hasPrefix("allow:") else { return }
+        let id = String(ident.dropFirst(6))
+        lightServer?.setPermissionDecision(id: id, behavior: "allow")
+        dismissPermissionBubble(id: id)
     }
 }
