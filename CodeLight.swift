@@ -359,7 +359,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     var lightServer: LightServer?
-    var permissionBubbles: [(id: String, window: NSWindow, toolName: String, command: String, timer: Timer?)] = []
+    var permissionBubbles: [(id: String, window: NSWindow, toolName: String, command: String, timer: Timer?, sessionId: String)] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 添加 Edit 菜单支持文本编辑快捷键（Cmd+C/V/X/A/Z）

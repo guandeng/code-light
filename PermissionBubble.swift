@@ -167,10 +167,13 @@ extension AppDelegate {
 
         // 35 秒超时自动关闭（hook 命令轮询 30 秒超时，多给 5 秒缓冲）
         let permId = id
+        let permSessionId = sessionId
         let timeout = Timer.scheduledTimer(withTimeInterval: 35, repeats: false) { [weak self] _ in
+            // 超时时清除该会话的 waiting 状态，避免灯一直红
+            self?.lightServer?.updateState(name: "idle", message: "超时", sessionId: permSessionId)
             self?.dismissPermissionBubble(id: permId)
         }
-        permissionBubbles.append((id: id, window: bubble, toolName: toolName, command: String(command.prefix(60)), timer: timeout))
+        permissionBubbles.append((id: id, window: bubble, toolName: toolName, command: String(command.prefix(60)), timer: timeout, sessionId: sessionId))
     }
 
     func dismissPermissionBubble(id: String) {
