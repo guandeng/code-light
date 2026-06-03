@@ -70,6 +70,7 @@ extension AppDelegate {
 
         let id = entry["id"] as? String ?? ""
         let input = entry["input"] as? [String: Any] ?? [:]
+        let sessionId = (input["session_id"] as? String) ?? "default"
         let toolName = input["tool_name"] as? String ?? "unknown"
         let toolInput = input["tool_input"] as? [String: Any] ?? [:]
         let command = toolInput["command"] as? String ?? toolInput["file_path"] as? String ?? ""
