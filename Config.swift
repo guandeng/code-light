@@ -30,6 +30,8 @@ struct AppConfig {
     var weatherCity: String = "深圳"
     var hookSetupDismissed = false
     var notifyOnPermission: Bool = true
+    var autoAllowPermission: Bool = false  // deprecated, kept for migration
+    var permissionMode: String = "popup"  // "always" | "rules" | "popup"
     var statsWebhook: String = ""  // unused, kept for config compatibility
 
     static func load() -> AppConfig {
@@ -61,6 +63,9 @@ struct AppConfig {
         if let v = ud.string(forKey: "weatherCity") { c.weatherCity = v }
         c.hookSetupDismissed = ud.bool(forKey: "hookSetupDismissed")
         if ud.object(forKey: "notifyOnPermission") != nil { c.notifyOnPermission = ud.bool(forKey: "notifyOnPermission") }
+        if ud.object(forKey: "autoAllowPermission") != nil { c.autoAllowPermission = ud.bool(forKey: "autoAllowPermission") }
+        if let v = ud.string(forKey: "permissionMode") { c.permissionMode = v }
+        else if c.autoAllowPermission { c.permissionMode = "always" }  // 旧配置迁移
         if let v = ud.string(forKey: "statsWebhook") { c.statsWebhook = v }
         return c
     }
@@ -92,6 +97,8 @@ struct AppConfig {
         ud.set(weatherCity, forKey: "weatherCity")
         ud.set(hookSetupDismissed, forKey: "hookSetupDismissed")
         ud.set(notifyOnPermission, forKey: "notifyOnPermission")
+        ud.set(autoAllowPermission, forKey: "autoAllowPermission")
+        ud.set(permissionMode, forKey: "permissionMode")
         ud.set(statsWebhook, forKey: "statsWebhook")
     }
 }
@@ -137,6 +144,74 @@ extension NSColor {
         let g = Int(rgb.greenComponent * 255)
         let b = Int(rgb.blueComponent * 255)
         return String(format: "#%02X%02X%02X", r, g, b)
+    }
+}
+
+// ============================================================
+// AlwaysAllowManager — 总是运行规则管理（~/.codelight/config）
+// ============================================================
+
+class AlwaysAllowManager {
+    static let shared = AlwaysAllowManager()
+    private(set) var rules: [String] = []
+
+    private var configPath: String { NSHomeDirectory() + "/.codelight/config" }
+
+    private init() { loadRules() }
+
+    func loadRules() {
+        guard let content = try? String(contentsOfFile: configPath, encoding: .utf8) else { return }
+        rules = content.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("allow ") }
+            .map { String($0.dropFirst(6)).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    func saveRules() {
+        let dir = (configPath as NSString).deletingLastPathComponent
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: dir) {
+            try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        }
+        let content = rules.map { "allow \($0)" }.joined(separator: "\n") + "\n"
+        try? content.write(toFile: configPath, atomically: true, encoding: .utf8)
+    }
+
+    func addRule(_ pattern: String) {
+        let trimmed = pattern.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !rules.contains(trimmed) else { return }
+        rules.append(trimmed)
+        saveRules()
+    }
+
+    func removeRule(at index: Int) {
+        guard index >= 0, index < rules.count else { return }
+        rules.remove(at: index)
+        saveRules()
+    }
+
+    func clearAll() {
+        rules.removeAll()
+        saveRules()
+    }
+
+    func importDefaults() {
+        let defaults = ["git", "ls", "cat", "head", "tail", "find", "grep",
+                        "pwd", "echo", "which", "whoami", "date", "df", "du",
+                        "ps", "wc", "sort", "uniq", "diff", "file", "stat",
+                        "curl", "wget", "tree", "gh"]
+        for rule in defaults where !rules.contains(rule) { rules.append(rule) }
+        saveRules()
+    }
+
+    /// 前缀匹配：git → git status, git log, git commit 等
+    func shouldAllow(command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespaces)
+        for rule in rules {
+            if trimmed == rule || trimmed.hasPrefix(rule + " ") { return true }
+        }
+        return false
     }
 }
 

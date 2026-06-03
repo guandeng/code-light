@@ -23,6 +23,7 @@ class LightServer {
     private let deadTimeout: TimeInterval = 3600
     var onLog: ((String) -> Void)?
     var onPermissionRequest: (([String: Any]) -> Void)?
+    var onStateLeaveWaiting: (() -> Void)?
     var statsWebhook: String = ""  // unused, kept for config compatibility
 
     private struct SessionEntry {
@@ -161,6 +162,10 @@ class LightServer {
         if history.count > maxHistory { history.removeFirst(history.count - maxHistory) }
         onLog?("[状态] [\(sid.prefix(8))] \(name) — \(message)")
         StatsManager.shared.record(state: name, message: message, sessionId: sid)
+        // 状态离开 waiting 时自动关闭权限气泡（用户可能在编辑器里已处理）
+        if name != "waiting" {
+            onStateLeaveWaiting?()
+        }
     }
 
     private func handlePostState(body: String?) -> RouteResult {
@@ -473,6 +478,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let server = LightServer()
         server.onLog = { [weak self] msg in DispatchQueue.main.async { self?.log(msg) } }
         server.onPermissionRequest = { [weak self] entry in DispatchQueue.main.async { self?.showPermissionBubble(entry) } }
+        server.onStateLeaveWaiting = { [weak self] in DispatchQueue.main.async { self?.dismissAllPermissionBubbles() } }
         server.start(port: port)
         lightServer = server
         checkServerReachability()
@@ -747,6 +753,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var notifyCheck: NSButton!
     var soundSelect: NSPopUpButton!
     var permNotifyCheck: NSButton!
+    var autoAllowCheck: NSButton!  // deprecated, kept for saveSettings compat
     var fullscreenCheck: NSButton!
     var floatingCheck: NSButton!
     var mascotSelect: NSPopUpButton!
@@ -767,13 +774,21 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var weatherCheck: NSButton!
     var weatherStatusLabel: NSTextField!
     var citySelect: NSPopUpButton!
+    // 总是运行选项卡
+    var alwaysAllowContainer: NSView!
+    var alwaysAllowRulesList: NSView!
+    var addRuleField: NSTextField!
+    var permModeAlwaysRadio: NSButton!
+    var permModeRulesRadio: NSButton!
+    var permModePopupRadio: NSButton!
+    var rulesViews: [NSView] = []  // 规则区域所有子视图，仅 rules 模式可见
     // Sidebar navigation
     var sidebarButtons: [NSButton] = []
     var containers: [NSView] = []
     var generalContainer: NSView!
     var appearanceContainer: NSView!
     var behaviorContainer: NSView!
-    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "💡 灯效规则", "🔗 配置 Hook", "📊 统计"]
+    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "📊 统计"]
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
@@ -797,6 +812,13 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         autoLaunchCheck.state = c.autoLaunch ? .on : .off
         notifyCheck.state = c.notifyOnDone ? .on : .off
         permNotifyCheck.state = c.notifyOnPermission ? .on : .off
+        // 同步权限模式 radio
+        if permModeAlwaysRadio != nil {
+            permModeAlwaysRadio.state = (c.permissionMode == "always") ? .on : .off
+            permModeRulesRadio.state = (c.permissionMode == "rules") ? .on : .off
+            permModePopupRadio.state = (c.permissionMode == "popup") ? .on : .off
+            updateRulesSectionVisibility()
+        }
         fullscreenCheck.state = c.showOnFullscreen ? .on : .off
         floatingCheck.state = c.isFloating ? .on : .off
         showStatusCheck.state = c.showStatusText ? .on : .off
@@ -863,6 +885,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buildAppearanceSection(appearanceContainer!, c)
         buildBehaviorSection(behaviorContainer!, c)
 
+        alwaysAllowContainer = FlippedView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        buildAlwaysAllowSection(alwaysAllowContainer!, c)
+
         let rulesDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 700))
         let rulesContentHeight = buildRulesTab(rulesDoc)
         rulesDoc.frame.size.height = max(rulesContentHeight, mainH)
@@ -890,7 +915,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         statsScroll.backgroundColor = .clear
         statsContainer.addSubview(statsScroll)
 
-        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, rulesContainer!, hookContainer!, statsContainer!]
+        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, alwaysAllowContainer!, rulesContainer!, hookContainer!, statsContainer!]
         for (i, container) in containers.enumerated() {
             contentArea.addSubview(container)
             container.isHidden = (i != 0)
@@ -1156,6 +1181,254 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         floatingCheck.state = c.isFloating ? .on : .off
         floatingCheck.target = self; floatingCheck.action = #selector(toggleInstant(_:))
         view.addSubview(floatingCheck)
+    }
+
+    // MARK: - 总是运行选项卡
+
+    func buildAlwaysAllowSection(_ view: NSView, _ c: AppConfig) {
+        var y: CGFloat = 16
+
+        func sectionTitle(_ text: String, _ yy: CGFloat) {
+            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
+            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
+            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            l.textColor = NSColor.secondaryLabelColor
+            view.addSubview(l)
+        }
+
+        sectionTitle("权限处理模式", y); y += 28
+
+        let mode = c.permissionMode
+
+        // ① 弹窗确认（默认）
+        permModePopupRadio = NSButton(frame: NSRect(x: 24, y: y, width: 380, height: 24))
+        permModePopupRadio.setButtonType(.radio)
+        permModePopupRadio.title = "弹窗确认 — 所有权限请求弹窗确认"
+        permModePopupRadio.state = (mode == "popup") ? .on : .off
+        permModePopupRadio.target = self; permModePopupRadio.action = #selector(permModeChanged)
+        view.addSubview(permModePopupRadio); y += 28
+
+        let popupDesc = NSTextField(frame: NSRect(x: 40, y: y, width: 360, height: 18))
+        popupDesc.isEditable = false; popupDesc.isBordered = false; popupDesc.backgroundColor = .clear
+        popupDesc.font = NSFont.systemFont(ofSize: 10)
+        popupDesc.textColor = NSColor.tertiaryLabelColor
+        popupDesc.stringValue = "每个权限请求都需要手动确认"
+        view.addSubview(popupDesc); y += 28
+
+        // ② 总是运行
+        permModeAlwaysRadio = NSButton(frame: NSRect(x: 24, y: y, width: 380, height: 24))
+        permModeAlwaysRadio.setButtonType(.radio)
+        permModeAlwaysRadio.title = "总是运行 — 所有权限自动通过，不弹窗"
+        permModeAlwaysRadio.state = (mode == "always") ? .on : .off
+        permModeAlwaysRadio.target = self; permModeAlwaysRadio.action = #selector(permModeChanged)
+        view.addSubview(permModeAlwaysRadio); y += 28
+
+        let alwaysDesc = NSTextField(frame: NSRect(x: 40, y: y, width: 360, height: 18))
+        alwaysDesc.isEditable = false; alwaysDesc.isBordered = false; alwaysDesc.backgroundColor = .clear
+        alwaysDesc.font = NSFont.systemFont(ofSize: 10)
+        alwaysDesc.textColor = NSColor.tertiaryLabelColor
+        alwaysDesc.stringValue = "适用于信任所有 AI 操作的场景"
+        view.addSubview(alwaysDesc); y += 28
+
+        // ③ 规则运行
+        permModeRulesRadio = NSButton(frame: NSRect(x: 24, y: y, width: 380, height: 24))
+        permModeRulesRadio.setButtonType(.radio)
+        permModeRulesRadio.title = "规则运行 — 匹配规则的自动通过，其余弹窗"
+        permModeRulesRadio.state = (mode == "rules") ? .on : .off
+        permModeRulesRadio.target = self; permModeRulesRadio.action = #selector(permModeChanged)
+        view.addSubview(permModeRulesRadio); y += 28
+
+        let rulesDesc = NSTextField(frame: NSRect(x: 40, y: y, width: 360, height: 18))
+        rulesDesc.isEditable = false; rulesDesc.isBordered = false; rulesDesc.backgroundColor = .clear
+        rulesDesc.font = NSFont.systemFont(ofSize: 10)
+        rulesDesc.textColor = NSColor.tertiaryLabelColor
+        rulesDesc.stringValue = "按命令前缀匹配，如 git → git status, git log 等"
+        view.addSubview(rulesDesc); y += 32
+
+        // 分隔线
+        let sep = NSView(frame: NSRect(x: 16, y: y, width: 398, height: 1))
+        sep.wantsLayer = true; sep.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        view.addSubview(sep); y += 12
+
+        // --- 规则区域（仅 rules 模式可见）---
+        rulesViews = []
+
+        let rulesTitle = NSTextField(frame: NSRect(x: 16, y: y, width: 300, height: 20))
+        rulesTitle.isEditable = false; rulesTitle.isBordered = false; rulesTitle.backgroundColor = .clear
+        rulesTitle.stringValue = "命令规则（读取 ~/.codelight/config）"
+        rulesTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        rulesTitle.textColor = NSColor.secondaryLabelColor
+        view.addSubview(rulesTitle); rulesViews.append(rulesTitle); y += 24
+
+        let ruleDesc = NSTextField(frame: NSRect(x: 16, y: y, width: 400, height: 18))
+        ruleDesc.isEditable = false; ruleDesc.isBordered = false; ruleDesc.backgroundColor = .clear
+        ruleDesc.font = NSFont.systemFont(ofSize: 10)
+        ruleDesc.textColor = NSColor.tertiaryLabelColor
+        ruleDesc.stringValue = "前缀匹配：git → git status, git log, git commit 等"
+        view.addSubview(ruleDesc); rulesViews.append(ruleDesc); y += 28
+
+        // 可滚动规则列表
+        let listH: CGFloat = 220
+        alwaysAllowRulesList = FlippedView(frame: NSRect(x: 0, y: 0, width: 380, height: listH))
+        alwaysAllowRulesList.wantsLayer = true
+        alwaysAllowRulesList.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        alwaysAllowRulesList.layer?.cornerRadius = 6
+
+        let scrollView = NSScrollView(frame: NSRect(x: 16, y: y, width: 398, height: listH))
+        scrollView.documentView = alwaysAllowRulesList
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        view.addSubview(scrollView); rulesViews.append(scrollView)
+        rebuildAlwaysAllowRulesList()
+        y += listH + 12
+
+        // 添加规则输入框
+        addRuleField = NSTextField(frame: NSRect(x: 16, y: y, width: 280, height: 26))
+        addRuleField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        addRuleField.placeholderString = "输入命令前缀，如 git, ls, find"
+        addRuleField.target = self; addRuleField.action = #selector(addAlwaysAllowRule)
+        view.addSubview(addRuleField); rulesViews.append(addRuleField)
+
+        let addBtn = NSButton(frame: NSRect(x: 304, y: y, width: 56, height: 26))
+        addBtn.title = "添加"; addBtn.bezelStyle = .rounded
+        addBtn.font = NSFont.systemFont(ofSize: 12)
+        addBtn.target = self; addBtn.action = #selector(addAlwaysAllowRule)
+        view.addSubview(addBtn); rulesViews.append(addBtn); y += 36
+
+        // 导入默认 + 清空按钮
+        let importBtn = NSButton(frame: NSRect(x: 16, y: y, width: 140, height: 26))
+        importBtn.title = "导入默认安全命令"; importBtn.bezelStyle = .rounded
+        importBtn.font = NSFont.systemFont(ofSize: 11)
+        importBtn.target = self; importBtn.action = #selector(importDefaultRules)
+        view.addSubview(importBtn); rulesViews.append(importBtn)
+
+        let clearBtn = NSButton(frame: NSRect(x: 164, y: y, width: 80, height: 26))
+        clearBtn.title = "清空全部"; clearBtn.bezelStyle = .rounded
+        clearBtn.font = NSFont.systemFont(ofSize: 11)
+        clearBtn.target = self; clearBtn.action = #selector(clearAllRules)
+        view.addSubview(clearBtn); rulesViews.append(clearBtn); y += 36
+
+        // 配置文件路径提示
+        let pathInfo = NSTextField(frame: NSRect(x: 16, y: y, width: 400, height: 18))
+        pathInfo.isEditable = false; pathInfo.isBordered = false; pathInfo.backgroundColor = .clear
+        pathInfo.font = NSFont.systemFont(ofSize: 10)
+        pathInfo.textColor = NSColor.tertiaryLabelColor
+        pathInfo.stringValue = "配置文件: ~/.codelight/config"
+        view.addSubview(pathInfo); rulesViews.append(pathInfo)
+
+        // 根据 mode 控制规则区域可见性
+        updateRulesSectionVisibility()
+    }
+
+    @objc func permModeChanged(_ sender: NSButton) {
+        let radios = [permModeAlwaysRadio!, permModeRulesRadio!, permModePopupRadio!]
+        for r in radios { r.state = .off }
+        sender.state = .on
+
+        var c = appDelegate.config
+        if sender === permModeAlwaysRadio { c.permissionMode = "always" }
+        else if sender === permModeRulesRadio { c.permissionMode = "rules" }
+        else { c.permissionMode = "popup" }
+        c.autoAllowPermission = (c.permissionMode == "always")
+        c.save()
+        appDelegate.config = c
+        updateRulesSectionVisibility()
+    }
+
+    func updateRulesSectionVisibility() {
+        let hide = (appDelegate.config.permissionMode != "rules")
+        for v in rulesViews { v.isHidden = hide }
+    }
+
+    func rebuildAlwaysAllowRulesList() {
+        guard let list = alwaysAllowRulesList else { return }
+        list.subviews.forEach { $0.removeFromSuperview() }
+        AlwaysAllowManager.shared.loadRules()
+        let rules = AlwaysAllowManager.shared.rules
+        let listW = list.frame.width
+
+        if rules.isEmpty {
+            let empty = NSTextField(frame: NSRect(x: 12, y: 8, width: listW - 24, height: 20))
+            empty.isEditable = false; empty.isBordered = false; empty.backgroundColor = .clear
+            empty.font = NSFont.systemFont(ofSize: 11)
+            empty.textColor = NSColor.tertiaryLabelColor
+            empty.stringValue = "暂无规则 — 添加命令或导入默认规则"
+            list.addSubview(empty)
+            list.frame.size.height = 40
+            return
+        }
+
+        let chipFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let chipH: CGFloat = 28
+        let chipGap: CGFloat = 6
+        let padX: CGFloat = 10
+        let closeW: CGFloat = 16
+        var cx: CGFloat = 8
+        var cy: CGFloat = 8
+
+        for (i, rule) in rules.enumerated() {
+            let textW = (rule as NSString).size(withAttributes: [.font: chipFont]).width
+            let chipW = textW + padX + closeW + padX
+
+            // 换行
+            if cx + chipW > listW - 8 {
+                cx = 8
+                cy += chipH + chipGap
+            }
+
+            // 芯片背景
+            let chip = NSView(frame: NSRect(x: cx, y: cy, width: chipW, height: chipH))
+            chip.wantsLayer = true
+            chip.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.1).cgColor
+            chip.layer?.cornerRadius = 6
+            chip.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
+            chip.layer?.borderWidth = 0.5
+            list.addSubview(chip)
+
+            // 规则文字
+            let label = NSTextField(frame: NSRect(x: padX, y: 4, width: textW + 4, height: 20))
+            label.isEditable = false; label.isBordered = false; label.backgroundColor = .clear
+            label.font = chipFont
+            label.stringValue = rule
+            chip.addSubview(label)
+
+            // × 删除按钮
+            let closeBtn = NSButton(frame: NSRect(x: chipW - closeW - 4, y: (chipH - closeW) / 2, width: closeW, height: closeW))
+            closeBtn.title = "×"
+            closeBtn.isBordered = false
+            closeBtn.font = NSFont.systemFont(ofSize: 12, weight: .bold)
+            closeBtn.contentTintColor = NSColor.tertiaryLabelColor
+            closeBtn.tag = i
+            closeBtn.target = self; closeBtn.action = #selector(removeAlwaysAllowRule(_:))
+            chip.addSubview(closeBtn)
+
+            cx += chipW + chipGap
+        }
+
+        list.frame.size.height = max(cy + chipH + 8, 40)
+    }
+
+    @objc func addAlwaysAllowRule() {
+        guard let text = addRuleField?.stringValue.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return }
+        AlwaysAllowManager.shared.addRule(text)
+        addRuleField.stringValue = ""
+        rebuildAlwaysAllowRulesList()
+    }
+
+    @objc func removeAlwaysAllowRule(_ sender: NSButton) {
+        AlwaysAllowManager.shared.removeRule(at: sender.tag)
+        rebuildAlwaysAllowRulesList()
+    }
+
+    @objc func importDefaultRules() {
+        AlwaysAllowManager.shared.importDefaults()
+        rebuildAlwaysAllowRulesList()
+    }
+
+    @objc func clearAllRules() {
+        AlwaysAllowManager.shared.clearAll()
+        rebuildAlwaysAllowRulesList()
     }
 
     @discardableResult
@@ -1649,6 +1922,15 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.autoLaunch = autoLaunchCheck.state == .on
         c.notifyOnDone = notifyCheck.state == .on
         c.notifyOnPermission = permNotifyCheck.state == .on
+        // 保存权限模式
+        if permModeAlwaysRadio != nil {
+            if permModeAlwaysRadio.state == .on { c.permissionMode = "always" }
+            else if permModeRulesRadio.state == .on { c.permissionMode = "rules" }
+            else { c.permissionMode = "popup" }
+            c.autoAllowPermission = (c.permissionMode == "always")
+        } else {
+            c.autoAllowPermission = autoAllowCheck.state == .on
+        }
         c.completionSound = soundSelect.titleOfSelectedItem ?? "Glass"
         c.showOnFullscreen = fullscreenCheck.state == .on
         c.horizontal = horizontalCheck.state == .on
@@ -1934,6 +2216,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc func sidebarButtonClicked(_ sender: NSButton) {
         let row = sender.tag
         let isStatsTab = (row == sidebarItems.count - 1)
+        let isAlwaysAllowTab = (row == 3)
         for (i, c) in containers.enumerated() {
             c.isHidden = (i != row)
         }
@@ -1949,6 +2232,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             statsRefreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
                 self?.rebuildStatsTab()
             }
+        }
+        if isAlwaysAllowTab {
+            rebuildAlwaysAllowRulesList()
         }
     }
 

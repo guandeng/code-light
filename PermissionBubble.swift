@@ -74,11 +74,30 @@ extension AppDelegate {
         let toolInput = input["tool_input"] as? [String: Any] ?? [:]
         let command = toolInput["command"] as? String ?? toolInput["file_path"] as? String ?? ""
 
-        // Switch to waiting state
-        let sessionId = input["session_id"] as? String ?? "default"
-        if let ls = lightServer {
-            ls.updateState(name: "waiting", message: "permission: \(toolName)", sessionId: sessionId)
+        // 权限模式判断：always / rules / popup
+        let mode = config.permissionMode
+        if mode == "always" {
+            // 总是运行：直接放行
+            if let ls = lightServer {
+                ls.setPermissionDecision(id: id, behavior: "allow")
+            }
+            log("[权限] 总是运行: \(toolName)")
+            return
         }
+
+        if mode == "rules" {
+            // 规则运行：匹配规则则放行，否则弹窗
+            if AlwaysAllowManager.shared.shouldAllow(command: command) {
+                if let ls = lightServer {
+                    ls.setPermissionDecision(id: id, behavior: "allow")
+                }
+                log("[权限] 规则匹配自动允许: \(String(command.prefix(80)))")
+                return
+            }
+            // 不匹配规则，继续弹窗确认
+        }
+
+        // popup 模式或 rules 未匹配：弹窗确认
 
         let bubbleW: CGFloat = 280, bubbleH: CGFloat = 150, bubbleGap: CGFloat = 8
         let tailW: CGFloat = 12

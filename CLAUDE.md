@@ -40,6 +40,8 @@
    ```
    会自动：编译 → codesign → 打包 zip → 创建 GitHub Release
 
+   > **注意**：GitHub Release 的 description 必须说明本次发布包含的功能/改进，不要留空。
+
 4. **验证**
    - 确认 GitHub Release 页面出现新版本
    - 确认 zip 可下载
