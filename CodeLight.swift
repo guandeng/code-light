@@ -602,6 +602,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         buildLightWindow()
     }
 
+    /// 保存配置 + 自�� WebDAV 同步
+    func saveConfig() {
+        config.save()
+        if config.webdavAutoSync && !config.webdavURL.isEmpty {
+            WebDAVSync.shared.uploadConfig(config) { success, msg in
+                DispatchQueue.main.async {
+                    self.log("[WebDAV] 自动同步: \(msg)")
+                }
+            }
+        }
+    }
+
     /// 从磁盘重新加载配置并重建窗口（保存后调用）
     func restartWithNewConfig() {
         let oldHorizontal = config.horizontal
@@ -949,6 +961,13 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         portField.stringValue = port
         portField.font = NSFont.systemFont(ofSize: 12)
         portField.placeholderString = "8866"
+        portField.onAction = { [weak self] in
+            guard let self = self else { return }
+            let p = self.serverField.stringValue.isEmpty ? "8866" : self.serverField.stringValue
+            self.appDelegate.config.serverURL = "http://127.0.0.1:" + p
+            self.appDelegate.saveConfig()
+            self.appDelegate.restartWithNewConfig()
+        }
         serverField = portField
 
         let testBtn = NSButton(frame: NSRect(x: 86, y: 0, width: 50, height: 24))
@@ -968,7 +987,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let pollAccessory = SettingsRowView.makeSlider(value: c.pollInterval, min: 0.1, max: 3.0, format: "%.1fs") { [weak self] v in
             guard let self = self else { return }
             self.appDelegate.config.pollInterval = v
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.pollSlider?.doubleValue = v
             if let lbl = self.pollLabel { lbl.stringValue = String(format: "%.1fs", v) }
         }
@@ -994,7 +1013,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let launchToggle = SettingsRowView.makeToggle(isOn: c.autoLaunch) { [weak self] isOn in
             guard let self = self else { return }
             self.appDelegate.config.autoLaunch = isOn
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             if isOn { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
         }
         autoLaunchCheck = launchToggle
@@ -1040,7 +1059,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let opacityAcc = SettingsRowView.makeSlider(value: c.opacity, min: 0.3, max: 1.0, format: "%.0f%%") { [weak self] v in
             guard let self = self else { return }
             self.appDelegate.config.opacity = v
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.lightWindow.alphaValue = v
             if let lbl = self.opacityLabel { lbl.stringValue = "\(Int(v * 100))%" }
         }
@@ -1050,7 +1069,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let blinkAcc = SettingsRowView.makeSlider(value: c.blinkSpeed, min: 0.2, max: 2.0, format: "%.1fs") { [weak self] v in
             guard let self = self else { return }
             self.appDelegate.config.blinkSpeed = v
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
         }
         if let slider = blinkAcc.subviews.first(where: { $0 is NSSlider }) as? NSSlider { blinkSlider = slider }
         if let lbl = blinkAcc.subviews.first(where: { $0 is NSTextField }) as? NSTextField { blinkLabel = lbl }
@@ -1058,7 +1077,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let sizeAcc = SettingsRowView.makeSlider(value: c.windowSize, min: 30, max: 120, format: "%.0f") { [weak self] v in
             guard let self = self else { return }
             self.appDelegate.config.windowSize = v
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.rebuildWithCurrentConfig()
         }
         if let slider = sizeAcc.subviews.first(where: { $0 is NSSlider }) as? NSSlider { sizeSlider = slider }
@@ -1070,7 +1089,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             guard let self = self else { return }
             let themes = ["dark", "light", "custom"]
             self.appDelegate.config.theme = themes[idx]
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.restartWithNewConfig()
         }
         themeSelect = themeAcc
@@ -1083,7 +1102,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             guard let self = self else { return }
             if let hex = self.colorWell.color.hexString {
                 self.appDelegate.config.customColor = hex
-                self.appDelegate.config.save()
+                self.appDelegate.saveConfig()
                 self.appDelegate.restartWithNewConfig()
             }
         }
@@ -1094,7 +1113,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             guard let self = self else { return }
             let types = ["cow", "cat", "robot", "horse", "chicken"]
             self.appDelegate.config.mascotType = types[idx]
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.restartWithNewConfig()
         }
         mascotSelect = mascotAcc
@@ -1106,7 +1125,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             self.appDelegate.config.displayMode = modes[idx]
             self.appDelegate.config.horizontal = (modes[idx] == "horizontal")
             self.appDelegate.config.edgeBar = (modes[idx] == "edgebar") ? (self.appDelegate.config.edgeBar ?? "right") : nil
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.rebuildWithCurrentConfig()
         }
         displayModeSegment = modeAcc
@@ -1116,7 +1135,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         statusToggle.onAction = { [weak self] in
             guard let self = self else { return }
             self.appDelegate.config.showStatusText = statusToggle.state == .on
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.restartWithNewConfig()
         }
         showStatusCheck = statusToggle
@@ -1143,7 +1162,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         weatherToggle.onAction = { [weak self] in
             guard let self = self else { return }
             self.appDelegate.config.weatherThemeEnabled = weatherToggle.state == .on
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.restartWithNewConfig()
         }
         weatherCheck = weatherToggle
@@ -1153,7 +1172,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let cityAcc = SettingsRowView.makePopup(items: cityNames, selectedIndex: cityIdx) { [weak self] idx in
             guard let self = self else { return }
             self.appDelegate.config.weatherCity = cityNames[idx]
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             WeatherManager.shared.startPolling()
         }
         citySelect = cityAcc
@@ -1166,6 +1185,19 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         weatherGroup.frame.origin = NSPoint(x: 16, y: y)
         weatherGroup.autoresizingMask = .width
         container.addSubview(weatherGroup)
+        y += weatherGroup.frame.height + 8
+
+        // 天气状态标签（隐藏，仅作为方法引用目标）
+        weatherStatusLabel = NSTextField(frame: NSRect(x: 32, y: y, width: 300, height: 16))
+        weatherStatusLabel.isEditable = false; weatherStatusLabel.isBordered = false
+        weatherStatusLabel.backgroundColor = .clear; weatherStatusLabel.drawsBackground = false
+        weatherStatusLabel.font = NSFont.systemFont(ofSize: 10)
+        weatherStatusLabel.textColor = NSColor.tertiaryLabelColor
+        if c.weatherThemeEnabled {
+            let wm = WeatherManager.shared
+            weatherStatusLabel.stringValue = "\(wm.currentCondition.displayName(code: wm.weatherCode)) \(Int(wm.currentTemp))°C"
+        }
+        container.addSubview(weatherStatusLabel)
     }
 
     func buildBehaviorSection(_ container: NSView, _ c: AppConfig) {
@@ -1175,7 +1207,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let notifyToggle = SettingsRowView.makeToggle(isOn: c.notifyOnDone) { [weak self] isOn in
             guard let self = self else { return }
             self.appDelegate.config.notifyOnDone = isOn
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.restartWithNewConfig()
         }
         notifyCheck = notifyToggle
@@ -1185,14 +1217,14 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let soundPopup = SettingsRowView.makePopup(items: sounds, selectedIndex: soundIdx) { [weak self] idx in
             guard let self = self else { return }
             self.appDelegate.config.completionSound = sounds[idx]
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
         }
         soundSelect = soundPopup
 
         let permNotifyToggle = SettingsRowView.makeToggle(isOn: c.notifyOnPermission) { [weak self] isOn in
             guard let self = self else { return }
             self.appDelegate.config.notifyOnPermission = isOn
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.restartWithNewConfig()
         }
         permNotifyCheck = permNotifyToggle
@@ -1212,7 +1244,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let fullscreenToggle = SettingsRowView.makeToggle(isOn: c.showOnFullscreen) { [weak self] isOn in
             guard let self = self else { return }
             self.appDelegate.config.showOnFullscreen = isOn
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.restartWithNewConfig()
         }
         fullscreenCheck = fullscreenToggle
@@ -1220,7 +1252,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let floatingToggle = SettingsRowView.makeToggle(isOn: c.isFloating) { [weak self] isOn in
             guard let self = self else { return }
             self.appDelegate.config.isFloating = isOn
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
             self.appDelegate.restartWithNewConfig()
         }
         floatingCheck = floatingToggle
@@ -1606,7 +1638,11 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         y -= 40
 
         // --- Group: 选择工具 ---
-        let toolSeg = SettingsRowView.makeSegmented(labels: ["Claude Code", "Codex", "Cursor"], selected: 0) { _ in }
+        let toolSeg = SettingsRowView.makeSegmented(labels: ["Claude Code", "Codex", "Cursor"], selected: appDelegate.config.hookToolIndex) { [weak self] idx in
+            guard let self = self else { return }
+            self.appDelegate.config.hookToolIndex = idx
+            self.appDelegate.saveConfig()
+        }
         hookToolSegment = toolSeg
 
         let toolGroup = SettingsGroupView(header: "选择工具", rows: [
@@ -1614,7 +1650,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                             accessory: toolSeg, isFirst: true, isLast: true),
         ])
         toolGroup.frame.origin = NSPoint(x: 16, y: y - toolGroup.frame.height)
-        toolGroup.autoresizingMask = [.minXMargin, .maxYMargin]
+        toolGroup.autoresizingMask = [.minXMargin, .maxYMargin, .width]
         view.addSubview(toolGroup)
         y -= toolGroup.frame.height + 20
 
@@ -1858,10 +1894,11 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         weatherStatusLabel.textColor = NSColor.controlAccentColor
     }
 
-    @objc func toggleInstant(_ sender: NSButton) {
+    @objc func toggleInstant(_ sender: Any) {
         var c = appDelegate.config
-        if sender == weatherCheck {
-            c.weatherThemeEnabled = sender.state == .on
+        let isOn = (sender as? NSSwitch)?.state == .on || (sender as? NSButton)?.state == .on
+        if let s = sender as? NSObject, s == weatherCheck {
+            c.weatherThemeEnabled = isOn
             if c.weatherThemeEnabled {
                 weatherStatusLabel.stringValue = "获取天气中..."
                 WeatherManager.shared.onWeatherUpdate = { [weak self] condition, temp in
@@ -1872,8 +1909,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 WeatherManager.shared.stopPolling()
                 weatherStatusLabel.stringValue = ""
             }
-        } else if sender == showStatusCheck {
-            c.showStatusText = sender.state == .on
+        } else if let s = sender as? NSObject, s == showStatusCheck {
+            c.showStatusText = isOn
         }
         c.save()
         appDelegate.config = c
@@ -2009,7 +2046,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let autoSyncToggle = SettingsRowView.makeToggle(isOn: c.webdavAutoSync) { [weak self] isOn in
             guard let self = self else { return }
             self.appDelegate.config.webdavAutoSync = isOn
-            self.appDelegate.config.save()
+            self.appDelegate.saveConfig()
         }
         webdavAutoSyncCheck = autoSyncToggle
 

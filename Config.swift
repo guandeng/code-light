@@ -32,6 +32,7 @@ struct AppConfig {
     var notifyOnPermission: Bool = true
     var autoAllowPermission: Bool = false  // deprecated, kept for migration
     var permissionMode: String = "popup"  // "always" | "rules" | "popup"
+    var hookToolIndex: Int = 0  // 0=Claude Code, 1=Codex, 2=Cursor
     var statsWebhook: String = ""  // unused, kept for config compatibility
     var webdavURL: String = ""     // WebDAV 服务器地址，如 https://dav.jianguoyun.com/dav/
     var webdavUser: String = ""    // WebDAV 用户名
@@ -71,6 +72,7 @@ struct AppConfig {
         if ud.object(forKey: "autoAllowPermission") != nil { c.autoAllowPermission = ud.bool(forKey: "autoAllowPermission") }
         if let v = ud.string(forKey: "permissionMode") { c.permissionMode = v }
         else if c.autoAllowPermission { c.permissionMode = "always" }  // 旧配置迁移
+        if ud.object(forKey: "hookToolIndex") != nil { c.hookToolIndex = ud.integer(forKey: "hookToolIndex") }
         if let v = ud.string(forKey: "statsWebhook") { c.statsWebhook = v }
         if let v = ud.string(forKey: "webdavURL") { c.webdavURL = v }
         if let v = ud.string(forKey: "webdavUser") { c.webdavUser = v }
@@ -109,6 +111,7 @@ struct AppConfig {
         ud.set(notifyOnPermission, forKey: "notifyOnPermission")
         ud.set(autoAllowPermission, forKey: "autoAllowPermission")
         ud.set(permissionMode, forKey: "permissionMode")
+        ud.set(hookToolIndex, forKey: "hookToolIndex")
         ud.set(statsWebhook, forKey: "statsWebhook")
         ud.set(webdavURL, forKey: "webdavURL")
         ud.set(webdavUser, forKey: "webdavUser")
