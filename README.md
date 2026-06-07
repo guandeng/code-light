@@ -2,7 +2,7 @@
 
 <p>
   <a href="https://github.com/guandeng/code-light/releases/latest">
-    <img src="https://img.shields.io/badge/⬇️_下载-v1.0.9-green?style=for-the-badge" alt="Download" />
+    <img src="https://img.shields.io/badge/⬇️_下载-v1.1.0-green?style=for-the-badge" alt="Download" />
   </a>
   <a href="https://github.com/guandeng/code-light/releases">
     <img src="https://img.shields.io/github/v/release/guandeng/code-light?style=flat-square&label=Release" alt="Release" />
