@@ -33,6 +33,11 @@ struct AppConfig {
     var autoAllowPermission: Bool = false  // deprecated, kept for migration
     var permissionMode: String = "popup"  // "always" | "rules" | "popup"
     var statsWebhook: String = ""  // unused, kept for config compatibility
+    var webdavURL: String = ""     // WebDAV 服务器地址，如 https://dav.jianguoyun.com/dav/
+    var webdavUser: String = ""    // WebDAV 用户名
+    var webdavPass: String = ""    // WebDAV 密码/应用专用密码
+    var webdavPath: String = "/codelight/config.json"  // 远程配置文件路径
+    var webdavAutoSync: Bool = false  // 自动同步开关
 
     static func load() -> AppConfig {
         let ud = UserDefaults.standard
@@ -67,6 +72,11 @@ struct AppConfig {
         if let v = ud.string(forKey: "permissionMode") { c.permissionMode = v }
         else if c.autoAllowPermission { c.permissionMode = "always" }  // 旧配置迁移
         if let v = ud.string(forKey: "statsWebhook") { c.statsWebhook = v }
+        if let v = ud.string(forKey: "webdavURL") { c.webdavURL = v }
+        if let v = ud.string(forKey: "webdavUser") { c.webdavUser = v }
+        if let v = ud.string(forKey: "webdavPass") { c.webdavPass = v }
+        if let v = ud.string(forKey: "webdavPath") { c.webdavPath = v }
+        if ud.object(forKey: "webdavAutoSync") != nil { c.webdavAutoSync = ud.bool(forKey: "webdavAutoSync") }
         return c
     }
 
@@ -100,6 +110,58 @@ struct AppConfig {
         ud.set(autoAllowPermission, forKey: "autoAllowPermission")
         ud.set(permissionMode, forKey: "permissionMode")
         ud.set(statsWebhook, forKey: "statsWebhook")
+        ud.set(webdavURL, forKey: "webdavURL")
+        ud.set(webdavUser, forKey: "webdavUser")
+        ud.set(webdavPass, forKey: "webdavPass")
+        ud.set(webdavPath, forKey: "webdavPath")
+        ud.set(webdavAutoSync, forKey: "webdavAutoSync")
+    }
+
+    /// 导出为 JSON（用于 WebDAV 同步，排除设备相关的位置信息）
+    func toJSON() -> [String: Any] {
+        return [
+            "opacity": opacity,
+            "blinkSpeed": blinkSpeed,
+            "isFloating": isFloating,
+            "notifyOnDone": notifyOnDone,
+            "completionSound": completionSound,
+            "showOnFullscreen": showOnFullscreen,
+            "displayMode": displayMode,
+            "showStatusText": showStatusText,
+            "windowSize": windowSize,
+            "mascotType": mascotType,
+            "theme": theme,
+            "customColor": customColor,
+            "weatherThemeEnabled": weatherThemeEnabled,
+            "weatherCity": weatherCity,
+            "notifyOnPermission": notifyOnPermission,
+            "permissionMode": permissionMode,
+            "pollInterval": pollInterval,
+            "webdavAutoSync": webdavAutoSync,
+        ]
+    }
+
+    /// 从 JSON 导入配置（合并，不覆盖位置信息）
+    mutating func applyJSON(_ dict: [String: Any]) {
+        if let v = dict["opacity"] as? Double { opacity = v }
+        if let v = dict["blinkSpeed"] as? Double { blinkSpeed = v }
+        if let v = dict["isFloating"] as? Bool { isFloating = v }
+        if let v = dict["notifyOnDone"] as? Bool { notifyOnDone = v }
+        if let v = dict["completionSound"] as? String { completionSound = v }
+        if let v = dict["showOnFullscreen"] as? Bool { showOnFullscreen = v }
+        if let v = dict["displayMode"] as? String { displayMode = v }
+        if let v = dict["showStatusText"] as? Bool { showStatusText = v }
+        if let v = dict["windowSize"] as? Double { windowSize = v }
+        if let v = dict["mascotType"] as? String { mascotType = v }
+        if let v = dict["theme"] as? String { theme = v }
+        if let v = dict["customColor"] as? String { customColor = v }
+        if let v = dict["weatherThemeEnabled"] as? Bool { weatherThemeEnabled = v }
+        if let v = dict["weatherCity"] as? String { weatherCity = v }
+        if let v = dict["notifyOnPermission"] as? Bool { notifyOnPermission = v }
+        if let v = dict["permissionMode"] as? String { permissionMode = v }
+        if let v = dict["pollInterval"] as? Double { pollInterval = v }
+        if let v = dict["webdavAutoSync"] as? Bool { webdavAutoSync = v }
+        horizontal = (displayMode == "horizontal")
     }
 }
 

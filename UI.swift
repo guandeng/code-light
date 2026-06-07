@@ -998,9 +998,9 @@ class TimelineView: NSView {
         }
 
         let w = frame.width
-        let topPad: CGFloat = 44
-        let bottomPad: CGFloat = 30
-        let leftPad: CGFloat = 60
+        let topPad: CGFloat = 50
+        let bottomPad: CGFloat = 36
+        let leftPad: CGFloat = 70
         let rightPad: CGFloat = 20
         let chartH = frame.height - topPad - bottomPad
         let chartW = w - leftPad - rightPad

@@ -698,10 +698,10 @@ class TimelineWindowController: NSWindowController, NSWindowDelegate {
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
-        let rect = NSRect(x: 0, y: 0, width: 680, height: 260)
+        let rect = NSRect(x: 0, y: 0, width: 800, height: 300)
         let win = NSWindow(contentRect: rect, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         win.title = "今日 AI 工作时间线"
-        win.minSize = NSSize(width: 500, height: 200)
+        win.minSize = NSSize(width: 600, height: 220)
         win.isReleasedWhenClosed = false
         win.backgroundColor = NSColor(white: 0.12, alpha: 1)
         win.titlebarAppearsTransparent = true
@@ -749,50 +749,55 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var pollSlider: NSSlider!; var pollLabel: NSTextField!
     var opacitySlider: NSSlider!; var opacityLabel: NSTextField!
     var blinkSlider: NSSlider!; var blinkLabel: NSTextField!
-    var autoLaunchCheck: NSButton!
-    var notifyCheck: NSButton!
+    var autoLaunchCheck: NSSwitch!
+    var notifyCheck: NSSwitch!
     var soundSelect: NSPopUpButton!
-    var permNotifyCheck: NSButton!
-    var autoAllowCheck: NSButton!  // deprecated, kept for saveSettings compat
-    var fullscreenCheck: NSButton!
-    var floatingCheck: NSButton!
+    var permNotifyCheck: NSSwitch!
+    var fullscreenCheck: NSSwitch!
+    var floatingCheck: NSSwitch!
     var mascotSelect: NSPopUpButton!
     var horizontalCheck: NSButton!
     var displayModeSegment: NSSegmentedControl!
-    var showStatusCheck: NSButton!
+    var showStatusCheck: NSSwitch!
     var sizeSlider: NSSlider!; var sizeLabel: NSTextField!
     var rulesContainer: NSView!
     var hookContainer: NSView!
+    var advancedContainer: NSView!
+    var webdavURLField: NSTextField!
+    var webdavUserField: NSTextField!
+    var webdavPassField: NSSecureTextField!
+    var webdavPathField: NSTextField!
+    var webdavAutoSyncCheck: NSSwitch!
+    var webdavStatusLabel: NSTextField!
+    var logTextView: NSTextView!
+
     var statsContainer: NSView!
     var statsRefreshTimer: Timer?
-    var claudeCodeCheck: NSButton!
-    var codexCheck: NSButton!
-    var cursorCheck: NSButton!
+    var hookToolSegment: NSSegmentedControl!
     var hookStatusLabel: NSTextField!
     var themeSelect: NSPopUpButton!
     var colorWell: NSColorWell!
-    var weatherCheck: NSButton!
+    var weatherCheck: NSSwitch!
     var weatherStatusLabel: NSTextField!
     var citySelect: NSPopUpButton!
     // 总是运行选项卡
     var alwaysAllowContainer: NSView!
     var alwaysAllowRulesList: NSView!
     var addRuleField: NSTextField!
-    var permModeAlwaysRadio: NSButton!
-    var permModeRulesRadio: NSButton!
-    var permModePopupRadio: NSButton!
+    var permissionModeSegment: NSSegmentedControl!
     var rulesViews: [NSView] = []  // 规则区域所有子视图，仅 rules 模式可见
+    var rulesCard: NSView!
     // Sidebar navigation
     var sidebarButtons: [NSButton] = []
     var containers: [NSView] = []
     var generalContainer: NSView!
     var appearanceContainer: NSView!
     var behaviorContainer: NSView!
-    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "📊 统计"]
+    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "☁️ 高级", "📊 统计"]
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
-        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 620),
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 620),
                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "CodeLight 设置"; win.isReleasedWhenClosed = false
         super.init(window: win); win.delegate = self; buildUI()
@@ -812,11 +817,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         autoLaunchCheck.state = c.autoLaunch ? .on : .off
         notifyCheck.state = c.notifyOnDone ? .on : .off
         permNotifyCheck.state = c.notifyOnPermission ? .on : .off
-        // 同步权限模式 radio
-        if permModeAlwaysRadio != nil {
-            permModeAlwaysRadio.state = (c.permissionMode == "always") ? .on : .off
-            permModeRulesRadio.state = (c.permissionMode == "rules") ? .on : .off
-            permModePopupRadio.state = (c.permissionMode == "popup") ? .on : .off
+        // 同步权限模式 segment
+        if permissionModeSegment != nil {
+            let modeIdx = ["popup": 0, "always": 1, "rules": 2][c.permissionMode] ?? 0
+            permissionModeSegment.selectedSegment = modeIdx
             updateRulesSectionVisibility()
         }
         fullscreenCheck.state = c.showOnFullscreen ? .on : .off
@@ -834,10 +838,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         guard let view = window?.contentView else { return }
         let c = appDelegate.config
         let sideW: CGFloat = 150
-        let contentW: CGFloat = 430
+        let contentW = (window?.frame.width ?? 800) - sideW - 1
         let contentH: CGFloat = 620
-        let bottomH: CGFloat = 50
-        let mainH = contentH - bottomH
+        let mainH = contentH
 
         // --- Left Sidebar ---
         let sidebarBg = NSView(frame: NSRect(x: 0, y: 0, width: sideW, height: contentH))
@@ -875,17 +878,19 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         // --- Right Content Area ---
         let contentArea = NSView(frame: NSRect(x: sideW + 1, y: 0, width: contentW, height: contentH))
+        contentArea.wantsLayer = true
+        contentArea.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         view.addSubview(contentArea)
 
-        generalContainer = FlippedView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
-        appearanceContainer = FlippedView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
-        behaviorContainer = FlippedView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        generalContainer = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        appearanceContainer = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        behaviorContainer = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
 
         buildGeneralSection(generalContainer!, c)
         buildAppearanceSection(appearanceContainer!, c)
         buildBehaviorSection(behaviorContainer!, c)
 
-        alwaysAllowContainer = FlippedView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        alwaysAllowContainer = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         buildAlwaysAllowSection(alwaysAllowContainer!, c)
 
         let rulesDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 700))
@@ -893,294 +898,340 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         rulesDoc.frame.size.height = max(rulesContentHeight, mainH)
         let rulesScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         rulesScroll.documentView = rulesDoc
-        rulesScroll.hasVerticalScroller = true
-        rulesScroll.autohidesScrollers = true
+        rulesScroll.hasVerticalScroller = false
         rulesScroll.drawsBackground = false
-        rulesContainer = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        rulesContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         rulesContainer.addSubview(rulesScroll)
 
-        hookContainer = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        hookContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         buildHookTab(hookContainer!)
 
         let statsDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 900))
         buildStatsTab(statsDoc, c)
-        statsContainer = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: mainH))
+        statsContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         statsContainer.wantsLayer = true
         statsContainer.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.95).cgColor
         let statsScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         statsScroll.documentView = statsDoc
-        statsScroll.hasVerticalScroller = true
-        statsScroll.autohidesScrollers = true
+        statsScroll.hasVerticalScroller = false
         statsScroll.drawsBackground = false
-        statsScroll.backgroundColor = .clear
+        statsScroll.backgroundColor = NSColor.clear
         statsContainer.addSubview(statsScroll)
 
-        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, alwaysAllowContainer!, rulesContainer!, hookContainer!, statsContainer!]
+        // ☁️ 高级选项卡
+        let advancedDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 700))
+        buildAdvancedTab(advancedDoc, c)
+        let advancedMaxY = advancedDoc.subviews.reduce(CGFloat(0)) { max($0, $1.frame.origin.y + $1.frame.height) }
+        advancedDoc.frame.size.height = max(advancedMaxY + 20, mainH)
+        let advancedScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        advancedScroll.documentView = advancedDoc
+        advancedScroll.hasVerticalScroller = true
+        advancedScroll.autohidesScrollers = true
+        advancedScroll.drawsBackground = false
+        advancedContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        advancedContainer.addSubview(advancedScroll)
+
+        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, alwaysAllowContainer!, rulesContainer!, hookContainer!, advancedContainer!, statsContainer!]
         for (i, container) in containers.enumerated() {
             contentArea.addSubview(container)
             container.isHidden = (i != 0)
         }
-
-        // --- Bottom Bar ---
-        let bottomSep = NSView(frame: NSRect(x: 0, y: bottomH, width: contentW, height: 1))
-        bottomSep.wantsLayer = true; bottomSep.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        contentArea.addSubview(bottomSep)
-
-        let bottomBar = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: bottomH))
-        bottomBar.wantsLayer = true
-        bottomBar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        contentArea.addSubview(bottomBar)
-
-        let saveBtn = NSButton(frame: NSRect(x: 20, y: 12, width: 120, height: 32))
-        saveBtn.title = "保存并应用"; saveBtn.bezelStyle = .rounded
-        saveBtn.target = self; saveBtn.action = #selector(saveSettings)
-        bottomBar.addSubview(saveBtn)
-
-        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
-        let versionLabel = NSTextField(frame: NSRect(x: 160, y: 16, width: 120, height: 20))
-        versionLabel.isEditable = false; versionLabel.isBordered = false; versionLabel.backgroundColor = .clear
-        versionLabel.font = NSFont.systemFont(ofSize: 11)
-        versionLabel.textColor = NSColor.tertiaryLabelColor
-        versionLabel.stringValue = "CodeLight v\(ver)"
-        bottomBar.addSubview(versionLabel)
     }
 
     // MARK: - Section Builders
 
-    func buildGeneralSection(_ view: NSView, _ c: AppConfig) {
+    func buildGeneralSection(_ container: NSView, _ c: AppConfig) {
         var y: CGFloat = 16
-        let rx: CGFloat = 130
 
-        func label(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 110, height: 24))
-            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
-            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 13); l.alignment = .right
-            view.addSubview(l)
-        }
-
-        func sectionTitle(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
-            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
-            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            l.textColor = NSColor.secondaryLabelColor
-            view.addSubview(l)
-        }
-
-        sectionTitle("连接", y); y += 28
-        label("服务端口:", y)
-        serverField = NSTextField(frame: NSRect(x: rx, y: y, width: 100, height: 24))
+        // --- Group 1: 连接 ---
+        let portField = NSTextField(frame: NSRect(x: 0, y: 0, width: 80, height: 24))
         let port = c.serverURL.components(separatedBy: ":").last ?? "8866"
-        serverField.stringValue = port; serverField.font = NSFont.systemFont(ofSize: 12)
-        serverField.placeholderString = "8866"
-        view.addSubview(serverField)
+        portField.stringValue = port
+        portField.font = NSFont.systemFont(ofSize: 12)
+        portField.placeholderString = "8866"
+        serverField = portField
 
-        let testBtn = NSButton(frame: NSRect(x: rx + 108, y: y, width: 56, height: 24))
+        let testBtn = NSButton(frame: NSRect(x: 86, y: 0, width: 50, height: 24))
         testBtn.title = "测试"; testBtn.bezelStyle = .rounded; testBtn.font = NSFont.systemFont(ofSize: 11)
         testBtn.target = self; testBtn.action = #selector(testPortAction(_:))
-        view.addSubview(testBtn)
 
-        portTestLabel = NSTextField(frame: NSRect(x: rx + 170, y: y + 4, width: 140, height: 16))
+        portTestLabel = NSTextField(frame: NSRect(x: 140, y: 4, width: 140, height: 16))
         portTestLabel.isEditable = false; portTestLabel.isBordered = false
         portTestLabel.backgroundColor = .clear; portTestLabel.font = NSFont.systemFont(ofSize: 11)
         portTestLabel.stringValue = ""
-        view.addSubview(portTestLabel); y += 36
 
-        label("轮询间隔:", y + 4)
-        pollSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
-        pollSlider.minValue = 0.1; pollSlider.maxValue = 3.0; pollSlider.doubleValue = c.pollInterval
-        pollSlider.target = self; pollSlider.action = #selector(sliderChanged)
-        view.addSubview(pollSlider)
-        pollLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
-        pollLabel.isEditable = false; pollLabel.isBordered = false; pollLabel.backgroundColor = .clear
-        pollLabel.stringValue = String(format: "%.1fs", c.pollInterval); pollLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(pollLabel); y += 36
+        let portAccessory = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        portAccessory.addSubview(portField)
+        portAccessory.addSubview(testBtn)
+        portAccessory.addSubview(portTestLabel!)
 
+        let pollAccessory = SettingsRowView.makeSlider(value: c.pollInterval, min: 0.1, max: 3.0, format: "%.1fs") { [weak self] v in
+            guard let self = self else { return }
+            self.appDelegate.config.pollInterval = v
+            self.appDelegate.config.save()
+            self.pollSlider?.doubleValue = v
+            if let lbl = self.pollLabel { lbl.stringValue = String(format: "%.1fs", v) }
+        }
+        // store references for syncFromConfig
+        if let slider = pollAccessory.subviews.first(where: { $0 is NSSlider }) as? NSSlider {
+            pollSlider = slider
+        }
+        if let lbl = pollAccessory.subviews.first(where: { $0 is NSTextField }) as? NSTextField {
+            pollLabel = lbl
+        }
+
+        let connectGroup = SettingsGroupView(header: "连接", rows: [
+            SettingsRowView(title: "服务端口", accessory: portAccessory, isFirst: true),
+            SettingsRowView(title: "轮询间隔", subtitle: "每隔多久检查状态",
+                            accessory: pollAccessory, isLast: true),
+        ])
+        connectGroup.frame.origin = NSPoint(x: 16, y: y)
+        connectGroup.autoresizingMask = .width
+        container.addSubview(connectGroup)
+        y += connectGroup.frame.height + 8
+
+        // --- Group 2: 启动 ---
+        let launchToggle = SettingsRowView.makeToggle(isOn: c.autoLaunch) { [weak self] isOn in
+            guard let self = self else { return }
+            self.appDelegate.config.autoLaunch = isOn
+            self.appDelegate.config.save()
+            if isOn { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
+        }
+        autoLaunchCheck = launchToggle
+
+        let launchGroup = SettingsGroupView(header: "启动", rows: [
+            SettingsRowView(title: "开机自动启动", subtitle: "随系统启动自动运行",
+                            accessory: launchToggle, isFirst: true, isLast: true),
+        ])
+        launchGroup.frame.origin = NSPoint(x: 16, y: y)
+        launchGroup.autoresizingMask = .width
+        container.addSubview(launchGroup)
+        y += launchGroup.frame.height + 8
+
+        // --- Group 3: 更新 ---
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
-        let checkUpdateBtn = NSButton(frame: NSRect(x: rx, y: y + 2, width: 80, height: 24))
+        let updateAccessory = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        let checkUpdateBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 80, height: 24))
         checkUpdateBtn.title = "检查更新"; checkUpdateBtn.bezelStyle = .rounded
         checkUpdateBtn.font = NSFont.systemFont(ofSize: 11)
         checkUpdateBtn.target = self; checkUpdateBtn.action = #selector(checkForUpdate)
-        view.addSubview(checkUpdateBtn)
-        updateStatusLabel = NSTextField(frame: NSRect(x: rx + 90, y: y + 4, width: 200, height: 20))
-        updateStatusLabel.isEditable = false; updateStatusLabel.isBordered = false; updateStatusLabel.backgroundColor = .clear
+        updateAccessory.addSubview(checkUpdateBtn)
+
+        updateStatusLabel = NSTextField(frame: NSRect(x: 88, y: 4, width: 180, height: 20))
+        updateStatusLabel.isEditable = false; updateStatusLabel.isBordered = false
+        updateStatusLabel.backgroundColor = .clear
         updateStatusLabel.font = NSFont.systemFont(ofSize: 11); updateStatusLabel.textColor = NSColor.tertiaryLabelColor
         updateStatusLabel.stringValue = "v\(ver)"
-        view.addSubview(updateStatusLabel)
+        updateAccessory.addSubview(updateStatusLabel!)
+
+        let updateGroup = SettingsGroupView(header: "更新", rows: [
+            SettingsRowView(title: "检查更新",
+                            accessory: updateAccessory, isFirst: true, isLast: true),
+        ])
+        updateGroup.frame.origin = NSPoint(x: 16, y: y)
+        updateGroup.autoresizingMask = .width
+        container.addSubview(updateGroup)
     }
 
-    func buildAppearanceSection(_ view: NSView, _ c: AppConfig) {
+    func buildAppearanceSection(_ container: NSView, _ c: AppConfig) {
         var y: CGFloat = 16
-        let rx: CGFloat = 130
 
-        func label(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 110, height: 24))
-            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
-            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 13); l.alignment = .right
-            view.addSubview(l)
+        // --- Group 1: 外观 ---
+        let opacityAcc = SettingsRowView.makeSlider(value: c.opacity, min: 0.3, max: 1.0, format: "%.0f%%") { [weak self] v in
+            guard let self = self else { return }
+            self.appDelegate.config.opacity = v
+            self.appDelegate.config.save()
+            self.appDelegate.lightWindow.alphaValue = v
+            if let lbl = self.opacityLabel { lbl.stringValue = "\(Int(v * 100))%" }
         }
+        if let slider = opacityAcc.subviews.first(where: { $0 is NSSlider }) as? NSSlider { opacitySlider = slider }
+        if let lbl = opacityAcc.subviews.first(where: { $0 is NSTextField }) as? NSTextField { opacityLabel = lbl; lbl.stringValue = "\(Int(c.opacity * 100))%" }
 
-        func sectionTitle(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
-            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
-            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            l.textColor = NSColor.secondaryLabelColor
-            view.addSubview(l)
+        let blinkAcc = SettingsRowView.makeSlider(value: c.blinkSpeed, min: 0.2, max: 2.0, format: "%.1fs") { [weak self] v in
+            guard let self = self else { return }
+            self.appDelegate.config.blinkSpeed = v
+            self.appDelegate.config.save()
         }
+        if let slider = blinkAcc.subviews.first(where: { $0 is NSSlider }) as? NSSlider { blinkSlider = slider }
+        if let lbl = blinkAcc.subviews.first(where: { $0 is NSTextField }) as? NSTextField { blinkLabel = lbl }
 
-        sectionTitle("外观", y); y += 28
+        let sizeAcc = SettingsRowView.makeSlider(value: c.windowSize, min: 30, max: 120, format: "%.0f") { [weak self] v in
+            guard let self = self else { return }
+            self.appDelegate.config.windowSize = v
+            self.appDelegate.config.save()
+            self.appDelegate.rebuildWithCurrentConfig()
+        }
+        if let slider = sizeAcc.subviews.first(where: { $0 is NSSlider }) as? NSSlider { sizeSlider = slider }
+        if let lbl = sizeAcc.subviews.first(where: { $0 is NSTextField }) as? NSTextField { sizeLabel = lbl }
 
-        label("透明度:", y + 4)
-        opacitySlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
-        opacitySlider.minValue = 0.3; opacitySlider.maxValue = 1.0; opacitySlider.doubleValue = c.opacity
-        opacitySlider.target = self; opacitySlider.action = #selector(sliderChanged)
-        view.addSubview(opacitySlider)
-        opacityLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
-        opacityLabel.isEditable = false; opacityLabel.isBordered = false; opacityLabel.backgroundColor = .clear
-        opacityLabel.stringValue = "\(Int(c.opacity * 100))%"; opacityLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(opacityLabel); y += 32
+        let themeNames = ["🌙 深色", "☀️ 浅色", "🎨 自定义"]
+        let themeIdx = ["dark": 0, "light": 1, "custom": 2][c.theme] ?? 0
+        let themeAcc = SettingsRowView.makePopup(items: themeNames, selectedIndex: themeIdx) { [weak self] idx in
+            guard let self = self else { return }
+            let themes = ["dark", "light", "custom"]
+            self.appDelegate.config.theme = themes[idx]
+            self.appDelegate.config.save()
+            self.appDelegate.restartWithNewConfig()
+        }
+        themeSelect = themeAcc
 
-        label("吉祥物:", y + 4)
-        mascotSelect = NSPopUpButton(frame: NSRect(x: rx, y: y + 2, width: 140, height: 24))
-        mascotSelect.addItems(withTitles: ["🐂 小牛", "🐱 小猫", "🤖 机器人", "🐴 小马", "🏀 小鸡"])
-        mascotSelect.selectItem(at: ["cow": 0, "cat": 1, "robot": 2, "horse": 3, "chicken": 4][c.mascotType] ?? 0)
-        mascotSelect.target = self; mascotSelect.action = #selector(mascotChanged)
-        view.addSubview(mascotSelect); y += 32
-
-        label("主题:", y + 4)
-        themeSelect = NSPopUpButton(frame: NSRect(x: rx, y: y + 2, width: 140, height: 24))
-        themeSelect.addItems(withTitles: ["🌙 深色", "☀️ 浅色", "🎨 自定义"])
-        themeSelect.selectItem(at: ["dark": 0, "light": 1, "custom": 2][c.theme] ?? 0)
-        themeSelect.target = self; themeSelect.action = #selector(themeChanged)
-        view.addSubview(themeSelect)
-
-        colorWell = NSColorWell(frame: NSRect(x: rx + 150, y: y, width: 28, height: 24))
+        // 自定义颜色选择器
+        colorWell = NSColorWell(frame: NSRect(x: 0, y: 0, width: 44, height: 24))
         colorWell.color = NSColor(fromHex: c.customColor) ?? NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0)
         colorWell.isHidden = c.theme != "custom"
-        colorWell.target = self; colorWell.action = #selector(themeChanged)
-        view.addSubview(colorWell); y += 32
-
-        weatherCheck = NSButton(frame: NSRect(x: rx, y: y, width: 220, height: 24))
-        weatherCheck.setButtonType(.switch); weatherCheck.title = "天气主题（实时天气背景）"
-        weatherCheck.state = c.weatherThemeEnabled ? .on : .off
-        weatherCheck.target = self; weatherCheck.action = #selector(toggleInstant(_:))
-        view.addSubview(weatherCheck); y += 24
-
-        weatherStatusLabel = NSTextField(frame: NSRect(x: rx + 10, y: y + 4, width: 200, height: 16))
-        weatherStatusLabel.isEditable = false; weatherStatusLabel.isBordered = false
-        weatherStatusLabel.backgroundColor = .clear; weatherStatusLabel.font = NSFont.systemFont(ofSize: 10)
-        weatherStatusLabel.textColor = NSColor.tertiaryLabelColor
-        weatherStatusLabel.toolTip = "双击循环切换天气预览"
-        weatherStatusLabel.alignment = .left
-        if c.weatherThemeEnabled {
-            let wm = WeatherManager.shared
-            weatherStatusLabel.stringValue = "\(wm.currentCondition.displayName(code: wm.weatherCode)) \(Int(wm.currentTemp))°C"
+        colorWell.onAction = { [weak self] in
+            guard let self = self else { return }
+            if let hex = self.colorWell.color.hexString {
+                self.appDelegate.config.customColor = hex
+                self.appDelegate.config.save()
+                self.appDelegate.restartWithNewConfig()
+            }
         }
-        view.addSubview(weatherStatusLabel)
+
+        let mascotNames = ["🐂 小牛", "🐱 小猫", "🤖 机器人", "🐴 小马", "🏀 小鸡"]
+        let mascotIdx = ["cow": 0, "cat": 1, "robot": 2, "horse": 3, "chicken": 4][c.mascotType] ?? 0
+        let mascotAcc = SettingsRowView.makePopup(items: mascotNames, selectedIndex: mascotIdx) { [weak self] idx in
+            guard let self = self else { return }
+            let types = ["cow", "cat", "robot", "horse", "chicken"]
+            self.appDelegate.config.mascotType = types[idx]
+            self.appDelegate.config.save()
+            self.appDelegate.restartWithNewConfig()
+        }
+        mascotSelect = mascotAcc
+
+        let modeIdx = ["vertical": 0, "horizontal": 1, "mini": 2, "edgebar": 3][c.displayMode] ?? 0
+        let modeAcc = SettingsRowView.makeSegmented(labels: ["竖向", "横向", "迷你", "磁吸"], selected: modeIdx) { [weak self] idx in
+            guard let self = self else { return }
+            let modes = ["vertical", "horizontal", "mini", "edgebar"]
+            self.appDelegate.config.displayMode = modes[idx]
+            self.appDelegate.config.horizontal = (modes[idx] == "horizontal")
+            self.appDelegate.config.edgeBar = (modes[idx] == "edgebar") ? (self.appDelegate.config.edgeBar ?? "right") : nil
+            self.appDelegate.config.save()
+            self.appDelegate.rebuildWithCurrentConfig()
+        }
+        displayModeSegment = modeAcc
+
+        let statusToggle = NSSwitch(frame: NSRect(x: 0, y: 0, width: 42, height: 24))
+        statusToggle.state = c.showStatusText ? .on : .off
+        statusToggle.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.appDelegate.config.showStatusText = statusToggle.state == .on
+            self.appDelegate.config.save()
+            self.appDelegate.restartWithNewConfig()
+        }
+        showStatusCheck = statusToggle
+
+        let appearanceGroup = SettingsGroupView(header: "外观", rows: [
+            SettingsRowView(title: "透明度", accessory: opacityAcc, isFirst: true),
+            SettingsRowView(title: "主题", accessory: themeAcc),
+            SettingsRowView(title: "自定义颜色", accessory: colorWell),
+            SettingsRowView(title: "吉祥物", accessory: mascotAcc),
+            SettingsRowView(title: "显示样式", accessory: modeAcc),
+            SettingsRowView(title: "窗口大小", accessory: sizeAcc),
+            SettingsRowView(title: "闪烁速度", accessory: blinkAcc),
+            SettingsRowView(title: "显示状态文字", subtitle: "灯下方显示当前状态",
+                            accessory: statusToggle, isLast: true),
+        ])
+        appearanceGroup.frame.origin = NSPoint(x: 16, y: y)
+        appearanceGroup.autoresizingMask = .width
+        container.addSubview(appearanceGroup)
+        y += appearanceGroup.frame.height + 8
+
+        // --- Group 2: 天气 ---
+        let weatherToggle = NSSwitch(frame: NSRect(x: 0, y: 0, width: 42, height: 24))
+        weatherToggle.state = c.weatherThemeEnabled ? .on : .off
+        weatherToggle.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.appDelegate.config.weatherThemeEnabled = weatherToggle.state == .on
+            self.appDelegate.config.save()
+            self.appDelegate.restartWithNewConfig()
+        }
+        weatherCheck = weatherToggle
 
         let cityNames = CITIES.map { $0.name }
-        citySelect = NSPopUpButton(frame: NSRect(x: rx + 210, y: y - 2, width: 90, height: 24))
-        citySelect.addItems(withTitles: cityNames)
-        citySelect.selectItem(withTitle: c.weatherCity)
-        citySelect.target = self; citySelect.action = #selector(cityChanged)
-        citySelect.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(citySelect)
+        let cityIdx = cityNames.firstIndex(of: c.weatherCity) ?? 0
+        let cityAcc = SettingsRowView.makePopup(items: cityNames, selectedIndex: cityIdx) { [weak self] idx in
+            guard let self = self else { return }
+            self.appDelegate.config.weatherCity = cityNames[idx]
+            self.appDelegate.config.save()
+            WeatherManager.shared.startPolling()
+        }
+        citySelect = cityAcc
 
-        let dblClickView = DoubleClickView(frame: NSRect(x: rx + 10, y: y, width: 200, height: 24))
-        dblClickView.onDoubleClick = { [weak self] in self?.cycleWeatherPreview() }
-        view.addSubview(dblClickView)
-        y += 32
-
-        label("闪烁速度:", y + 4)
-        blinkSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
-        blinkSlider.minValue = 0.2; blinkSlider.maxValue = 2.0; blinkSlider.doubleValue = c.blinkSpeed
-        blinkSlider.target = self; blinkSlider.action = #selector(sliderChanged)
-        view.addSubview(blinkSlider)
-        blinkLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
-        blinkLabel.isEditable = false; blinkLabel.isBordered = false; blinkLabel.backgroundColor = .clear
-        blinkLabel.stringValue = String(format: "%.1fs", c.blinkSpeed); blinkLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(blinkLabel); y += 32
-
-        label("窗口大小:", y + 4)
-        sizeSlider = NSSlider(frame: NSRect(x: rx, y: y + 4, width: 120, height: 20))
-        sizeSlider.minValue = 30; sizeSlider.maxValue = 120; sizeSlider.doubleValue = c.windowSize
-        sizeSlider.target = self; sizeSlider.action = #selector(sizeSliderChanged)
-        view.addSubview(sizeSlider)
-        sizeLabel = NSTextField(frame: NSRect(x: rx + 130, y: y + 4, width: 50, height: 20))
-        sizeLabel.isEditable = false; sizeLabel.isBordered = false; sizeLabel.backgroundColor = .clear
-        sizeLabel.stringValue = "\(Int(c.windowSize))"; sizeLabel.font = NSFont.systemFont(ofSize: 11)
-        view.addSubview(sizeLabel); y += 32
-
-        label("显示样式:", y + 4)
-        displayModeSegment = NSSegmentedControl(labels: ["竖向", "横向", "迷你", "磁吸"], trackingMode: .selectOne, target: self, action: #selector(displayModeChanged))
-        displayModeSegment.frame = NSRect(x: rx, y: y, width: 240, height: 24)
-        displayModeSegment.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        let modeIdx = ["vertical": 0, "horizontal": 1, "mini": 2, "edgebar": 3][c.displayMode] ?? 0
-        displayModeSegment.selectedSegment = modeIdx
-        view.addSubview(displayModeSegment)
-
-        horizontalCheck = NSButton(frame: NSRect(x: -999, y: -999, width: 1, height: 1))
-        horizontalCheck.setButtonType(.switch); horizontalCheck.state = c.horizontal ? .on : .off
-        view.addSubview(horizontalCheck); y += 36
-
-        showStatusCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
-        showStatusCheck.setButtonType(.switch); showStatusCheck.title = "显示底部状态文字"
-        showStatusCheck.state = c.showStatusText ? .on : .off
-        showStatusCheck.target = self; showStatusCheck.action = #selector(toggleInstant(_:))
-        view.addSubview(showStatusCheck)
+        let weatherGroup = SettingsGroupView(header: "天气", rows: [
+            SettingsRowView(title: "天气主题", subtitle: "实时天气背景动画",
+                            accessory: weatherToggle, isFirst: true),
+            SettingsRowView(title: "城市", accessory: cityAcc, isLast: true),
+        ])
+        weatherGroup.frame.origin = NSPoint(x: 16, y: y)
+        weatherGroup.autoresizingMask = .width
+        container.addSubview(weatherGroup)
     }
 
-    func buildBehaviorSection(_ view: NSView, _ c: AppConfig) {
+    func buildBehaviorSection(_ container: NSView, _ c: AppConfig) {
         var y: CGFloat = 16
-        let rx: CGFloat = 130
 
-        func sectionTitle(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
-            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
-            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            l.textColor = NSColor.secondaryLabelColor
-            view.addSubview(l)
+        // --- Group 1: 通知 ---
+        let notifyToggle = SettingsRowView.makeToggle(isOn: c.notifyOnDone) { [weak self] isOn in
+            guard let self = self else { return }
+            self.appDelegate.config.notifyOnDone = isOn
+            self.appDelegate.config.save()
+            self.appDelegate.restartWithNewConfig()
         }
+        notifyCheck = notifyToggle
 
-        sectionTitle("行为", y); y += 28
-
-        autoLaunchCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
-        autoLaunchCheck.setButtonType(.switch); autoLaunchCheck.title = "开机自动启动"
-        autoLaunchCheck.state = c.autoLaunch ? .on : .off
-        autoLaunchCheck.target = self; autoLaunchCheck.action = #selector(toggleInstant(_:))
-        view.addSubview(autoLaunchCheck); y += 32
-
-        notifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
-        notifyCheck.setButtonType(.switch); notifyCheck.title = "任务完成时发送通知"
-        notifyCheck.state = c.notifyOnDone ? .on : .off
-        notifyCheck.target = self; notifyCheck.action = #selector(toggleInstant(_:))
-        view.addSubview(notifyCheck); y += 32
-
-        let soundLabel = NSTextField(labelWithString: "完成提示音:")
-        soundLabel.frame = NSRect(x: rx, y: y + 4, width: 80, height: 18)
-        view.addSubview(soundLabel)
         let sounds = ["Glass", "Hero", "Ping", "Pop", "Purr", "Tink", "default", "none"]
-        soundSelect = NSPopUpButton(frame: NSRect(x: rx + 88, y: y, width: 150, height: 26))
-        soundSelect.addItems(withTitles: sounds)
-        if let idx = sounds.firstIndex(of: c.completionSound) { soundSelect.selectItem(at: idx) }
-        view.addSubview(soundSelect); y += 36
+        let soundIdx = sounds.firstIndex(of: c.completionSound) ?? 0
+        let soundPopup = SettingsRowView.makePopup(items: sounds, selectedIndex: soundIdx) { [weak self] idx in
+            guard let self = self else { return }
+            self.appDelegate.config.completionSound = sounds[idx]
+            self.appDelegate.config.save()
+        }
+        soundSelect = soundPopup
 
-        permNotifyCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
-        permNotifyCheck.setButtonType(.switch); permNotifyCheck.title = "权限请求弹窗确认"
-        permNotifyCheck.state = c.notifyOnPermission ? .on : .off
-        permNotifyCheck.target = self; permNotifyCheck.action = #selector(toggleInstant(_:))
-        view.addSubview(permNotifyCheck); y += 32
+        let permNotifyToggle = SettingsRowView.makeToggle(isOn: c.notifyOnPermission) { [weak self] isOn in
+            guard let self = self else { return }
+            self.appDelegate.config.notifyOnPermission = isOn
+            self.appDelegate.config.save()
+            self.appDelegate.restartWithNewConfig()
+        }
+        permNotifyCheck = permNotifyToggle
 
-        fullscreenCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
-        fullscreenCheck.setButtonType(.switch); fullscreenCheck.title = "全屏应用上层显示"
-        fullscreenCheck.state = c.showOnFullscreen ? .on : .off
-        fullscreenCheck.target = self; fullscreenCheck.action = #selector(toggleInstant(_:))
-        view.addSubview(fullscreenCheck); y += 32
+        let notifyGroup = SettingsGroupView(header: "通知", rows: [
+            SettingsRowView(title: "任务完成通知", accessory: notifyToggle, isFirst: true),
+            SettingsRowView(title: "完成提示音", accessory: soundPopup),
+            SettingsRowView(title: "权限请求弹窗确认", subtitle: "收到权限请求时弹出气泡",
+                            accessory: permNotifyToggle, isLast: true),
+        ])
+        notifyGroup.frame.origin = NSPoint(x: 16, y: y)
+        notifyGroup.autoresizingMask = .width
+        container.addSubview(notifyGroup)
+        y += notifyGroup.frame.height + 8
 
-        floatingCheck = NSButton(frame: NSRect(x: rx, y: y, width: 240, height: 24))
-        floatingCheck.setButtonType(.switch); floatingCheck.title = "窗口悬浮置顶"
-        floatingCheck.state = c.isFloating ? .on : .off
-        floatingCheck.target = self; floatingCheck.action = #selector(toggleInstant(_:))
-        view.addSubview(floatingCheck)
+        // --- Group 2: 窗口 ---
+        let fullscreenToggle = SettingsRowView.makeToggle(isOn: c.showOnFullscreen) { [weak self] isOn in
+            guard let self = self else { return }
+            self.appDelegate.config.showOnFullscreen = isOn
+            self.appDelegate.config.save()
+            self.appDelegate.restartWithNewConfig()
+        }
+        fullscreenCheck = fullscreenToggle
+
+        let floatingToggle = SettingsRowView.makeToggle(isOn: c.isFloating) { [weak self] isOn in
+            guard let self = self else { return }
+            self.appDelegate.config.isFloating = isOn
+            self.appDelegate.config.save()
+            self.appDelegate.restartWithNewConfig()
+        }
+        floatingCheck = floatingToggle
+
+        let windowGroup = SettingsGroupView(header: "窗口", rows: [
+            SettingsRowView(title: "全屏应用上层显示", accessory: fullscreenToggle, isFirst: true),
+            SettingsRowView(title: "窗口悬浮置顶", accessory: floatingToggle, isLast: true),
+        ])
+        windowGroup.frame.origin = NSPoint(x: 16, y: y)
+        windowGroup.autoresizingMask = .width
+        container.addSubview(windowGroup)
     }
 
     // MARK: - 总是运行选项卡
@@ -1188,151 +1239,111 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func buildAlwaysAllowSection(_ view: NSView, _ c: AppConfig) {
         var y: CGFloat = 16
 
-        func sectionTitle(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
-            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
-            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            l.textColor = NSColor.secondaryLabelColor
-            view.addSubview(l)
-        }
-
-        sectionTitle("权限处理模式", y); y += 28
-
+        // --- Group: 权限处理模式 ---
         let mode = c.permissionMode
+        let modeIdx = ["popup": 0, "always": 1, "rules": 2][mode] ?? 0
 
-        // ① 弹窗确认（默认）
-        permModePopupRadio = NSButton(frame: NSRect(x: 24, y: y, width: 380, height: 24))
-        permModePopupRadio.setButtonType(.radio)
-        permModePopupRadio.title = "弹窗确认 — 所有权限请求弹窗确认"
-        permModePopupRadio.state = (mode == "popup") ? .on : .off
-        permModePopupRadio.target = self; permModePopupRadio.action = #selector(permModeChanged)
-        view.addSubview(permModePopupRadio); y += 28
+        let modeSeg = SettingsRowView.makeSegmented(labels: ["弹窗确认", "总是运行", "规则运行"], selected: modeIdx) { [weak self] idx in
+            guard let self = self else { return }
+            let modes = ["popup", "always", "rules"]
+            var c = self.appDelegate.config
+            c.permissionMode = modes[idx]
+            c.autoAllowPermission = (c.permissionMode == "always")
+            c.save()
+            self.appDelegate.config = c
+            self.updateRulesSectionVisibility()
+        }
+        permissionModeSegment = modeSeg
 
-        let popupDesc = NSTextField(frame: NSRect(x: 40, y: y, width: 360, height: 18))
-        popupDesc.isEditable = false; popupDesc.isBordered = false; popupDesc.backgroundColor = .clear
-        popupDesc.font = NSFont.systemFont(ofSize: 10)
-        popupDesc.textColor = NSColor.tertiaryLabelColor
-        popupDesc.stringValue = "每个权限请求都需要手动确认"
-        view.addSubview(popupDesc); y += 28
-
-        // ② 总是运行
-        permModeAlwaysRadio = NSButton(frame: NSRect(x: 24, y: y, width: 380, height: 24))
-        permModeAlwaysRadio.setButtonType(.radio)
-        permModeAlwaysRadio.title = "总是运行 — 所有权限自动通过，不弹窗"
-        permModeAlwaysRadio.state = (mode == "always") ? .on : .off
-        permModeAlwaysRadio.target = self; permModeAlwaysRadio.action = #selector(permModeChanged)
-        view.addSubview(permModeAlwaysRadio); y += 28
-
-        let alwaysDesc = NSTextField(frame: NSRect(x: 40, y: y, width: 360, height: 18))
-        alwaysDesc.isEditable = false; alwaysDesc.isBordered = false; alwaysDesc.backgroundColor = .clear
-        alwaysDesc.font = NSFont.systemFont(ofSize: 10)
-        alwaysDesc.textColor = NSColor.tertiaryLabelColor
-        alwaysDesc.stringValue = "适用于信任所有 AI 操作的场景"
-        view.addSubview(alwaysDesc); y += 28
-
-        // ③ 规则运行
-        permModeRulesRadio = NSButton(frame: NSRect(x: 24, y: y, width: 380, height: 24))
-        permModeRulesRadio.setButtonType(.radio)
-        permModeRulesRadio.title = "规则运行 — 匹配规则的自动通过，其余弹窗"
-        permModeRulesRadio.state = (mode == "rules") ? .on : .off
-        permModeRulesRadio.target = self; permModeRulesRadio.action = #selector(permModeChanged)
-        view.addSubview(permModeRulesRadio); y += 28
-
-        let rulesDesc = NSTextField(frame: NSRect(x: 40, y: y, width: 360, height: 18))
-        rulesDesc.isEditable = false; rulesDesc.isBordered = false; rulesDesc.backgroundColor = .clear
-        rulesDesc.font = NSFont.systemFont(ofSize: 10)
-        rulesDesc.textColor = NSColor.tertiaryLabelColor
-        rulesDesc.stringValue = "按命令前缀匹配，如 git → git status, git log 等"
-        view.addSubview(rulesDesc); y += 32
-
-        // 分隔线
-        let sep = NSView(frame: NSRect(x: 16, y: y, width: 398, height: 1))
-        sep.wantsLayer = true; sep.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        view.addSubview(sep); y += 12
+        let modeGroup = SettingsGroupView(header: "权限处理模式", rows: [
+            SettingsRowView(title: "处理模式", subtitle: "控制权限请求的确认方式",
+                            accessory: modeSeg, isFirst: true, isLast: true),
+        ])
+        modeGroup.frame.origin = NSPoint(x: 16, y: y)
+        modeGroup.autoresizingMask = .width
+        view.addSubview(modeGroup)
+        y += modeGroup.frame.height + 8
 
         // --- 规则区域（仅 rules 模式可见）---
         rulesViews = []
 
-        let rulesTitle = NSTextField(frame: NSRect(x: 16, y: y, width: 300, height: 20))
+        // 规则卡片容器
+        rulesCard = NSView(frame: NSRect(x: 16, y: y, width: view.bounds.width - 32, height: 0))
+        rulesCard.wantsLayer = true
+        rulesCard.layer?.cornerRadius = 10
+        rulesCard.layer?.masksToBounds = true
+        view.addSubview(rulesCard)
+        rulesViews.append(rulesCard)
+
+        var ry: CGFloat = 0
+
+        let rulesTitle = NSTextField(frame: NSRect(x: 12, y: ry, width: 300, height: 20))
         rulesTitle.isEditable = false; rulesTitle.isBordered = false; rulesTitle.backgroundColor = .clear
         rulesTitle.stringValue = "命令规则（读取 ~/.codelight/config）"
         rulesTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         rulesTitle.textColor = NSColor.secondaryLabelColor
-        view.addSubview(rulesTitle); rulesViews.append(rulesTitle); y += 24
+        rulesCard.addSubview(rulesTitle); rulesViews.append(rulesTitle); ry += 24
 
-        let ruleDesc = NSTextField(frame: NSRect(x: 16, y: y, width: 400, height: 18))
+        let ruleDesc = NSTextField(frame: NSRect(x: 12, y: ry, width: 400, height: 18))
         ruleDesc.isEditable = false; ruleDesc.isBordered = false; ruleDesc.backgroundColor = .clear
         ruleDesc.font = NSFont.systemFont(ofSize: 10)
         ruleDesc.textColor = NSColor.tertiaryLabelColor
         ruleDesc.stringValue = "前缀匹配：git → git status, git log, git commit 等"
-        view.addSubview(ruleDesc); rulesViews.append(ruleDesc); y += 28
+        rulesCard.addSubview(ruleDesc); rulesViews.append(ruleDesc); ry += 28
 
         // 可滚动规则列表
         let listH: CGFloat = 220
-        alwaysAllowRulesList = FlippedView(frame: NSRect(x: 0, y: 0, width: 380, height: listH))
+        alwaysAllowRulesList = FlippedView(frame: NSRect(x: 0, y: 0, width: rulesCard.frame.width - 24, height: listH))
         alwaysAllowRulesList.wantsLayer = true
         alwaysAllowRulesList.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
         alwaysAllowRulesList.layer?.cornerRadius = 6
 
-        let scrollView = NSScrollView(frame: NSRect(x: 16, y: y, width: 398, height: listH))
+        let scrollView = NSScrollView(frame: NSRect(x: 12, y: ry, width: rulesCard.frame.width - 24, height: listH))
         scrollView.documentView = alwaysAllowRulesList
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
+        scrollView.hasVerticalScroller = false
         scrollView.drawsBackground = false
-        view.addSubview(scrollView); rulesViews.append(scrollView)
+        rulesCard.addSubview(scrollView); rulesViews.append(scrollView)
         rebuildAlwaysAllowRulesList()
-        y += listH + 12
+        ry += listH + 12
 
         // 添加规则输入框
-        addRuleField = NSTextField(frame: NSRect(x: 16, y: y, width: 280, height: 26))
+        addRuleField = NSTextField(frame: NSRect(x: 12, y: ry, width: rulesCard.frame.width - 100, height: 26))
         addRuleField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         addRuleField.placeholderString = "输入命令前缀，如 git, ls, find"
         addRuleField.target = self; addRuleField.action = #selector(addAlwaysAllowRule)
-        view.addSubview(addRuleField); rulesViews.append(addRuleField)
+        rulesCard.addSubview(addRuleField); rulesViews.append(addRuleField)
 
-        let addBtn = NSButton(frame: NSRect(x: 304, y: y, width: 56, height: 26))
+        let addBtn = NSButton(frame: NSRect(x: rulesCard.frame.width - 80, y: ry, width: 68, height: 26))
         addBtn.title = "添加"; addBtn.bezelStyle = .rounded
         addBtn.font = NSFont.systemFont(ofSize: 12)
         addBtn.target = self; addBtn.action = #selector(addAlwaysAllowRule)
-        view.addSubview(addBtn); rulesViews.append(addBtn); y += 36
+        rulesCard.addSubview(addBtn); rulesViews.append(addBtn); ry += 36
 
         // 导入默认 + 清空按钮
-        let importBtn = NSButton(frame: NSRect(x: 16, y: y, width: 140, height: 26))
+        let importBtn = NSButton(frame: NSRect(x: 12, y: ry, width: 140, height: 26))
         importBtn.title = "导入默认安全命令"; importBtn.bezelStyle = .rounded
         importBtn.font = NSFont.systemFont(ofSize: 11)
         importBtn.target = self; importBtn.action = #selector(importDefaultRules)
-        view.addSubview(importBtn); rulesViews.append(importBtn)
+        rulesCard.addSubview(importBtn); rulesViews.append(importBtn)
 
-        let clearBtn = NSButton(frame: NSRect(x: 164, y: y, width: 80, height: 26))
+        let clearBtn = NSButton(frame: NSRect(x: 160, y: ry, width: 80, height: 26))
         clearBtn.title = "清空全部"; clearBtn.bezelStyle = .rounded
         clearBtn.font = NSFont.systemFont(ofSize: 11)
         clearBtn.target = self; clearBtn.action = #selector(clearAllRules)
-        view.addSubview(clearBtn); rulesViews.append(clearBtn); y += 36
+        rulesCard.addSubview(clearBtn); rulesViews.append(clearBtn); ry += 36
 
         // 配置文件路径提示
-        let pathInfo = NSTextField(frame: NSRect(x: 16, y: y, width: 400, height: 18))
+        let pathInfo = NSTextField(frame: NSRect(x: 12, y: ry, width: 400, height: 18))
         pathInfo.isEditable = false; pathInfo.isBordered = false; pathInfo.backgroundColor = .clear
         pathInfo.font = NSFont.systemFont(ofSize: 10)
         pathInfo.textColor = NSColor.tertiaryLabelColor
         pathInfo.stringValue = "配置文件: ~/.codelight/config"
-        view.addSubview(pathInfo); rulesViews.append(pathInfo)
+        rulesCard.addSubview(pathInfo); rulesViews.append(pathInfo)
+        ry += 24
+
+        rulesCard.frame.size.height = ry
 
         // 根据 mode 控制规则区域可见性
-        updateRulesSectionVisibility()
-    }
-
-    @objc func permModeChanged(_ sender: NSButton) {
-        let radios = [permModeAlwaysRadio!, permModeRulesRadio!, permModePopupRadio!]
-        for r in radios { r.state = .off }
-        sender.state = .on
-
-        var c = appDelegate.config
-        if sender === permModeAlwaysRadio { c.permissionMode = "always" }
-        else if sender === permModeRulesRadio { c.permissionMode = "rules" }
-        else { c.permissionMode = "popup" }
-        c.autoAllowPermission = (c.permissionMode == "always")
-        c.save()
-        appDelegate.config = c
         updateRulesSectionVisibility()
     }
 
@@ -1581,93 +1592,56 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     // ============================================================
 
     func buildHookTab(_ view: NSView) {
-        var y: CGFloat = 540
+        // hookContainer is a plain NSView (non-flipped), y descends from top
+        var y: CGFloat = view.bounds.height - 16
 
-        func sectionTitle(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 340, height: 20))
-            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
-            l.stringValue = text; l.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            l.textColor = NSColor.secondaryLabelColor
-            view.addSubview(l)
-        }
-
-        func descLabel(_ text: String, _ yy: CGFloat) {
-            let l = NSTextField(frame: NSRect(x: 28, y: yy - 8, width: 320, height: 32))
-            l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear
-            l.font = NSFont.systemFont(ofSize: 11)
-            l.textColor = NSColor(white: 0.45, alpha: 1.0)
-            l.stringValue = text; l.cell?.wraps = true
-            view.addSubview(l)
-        }
-
-        // 端口提示
+        // Port info
         let currentPort = appDelegate.config.serverURL.components(separatedBy: ":").last ?? "8866"
-        let portInfo = NSTextField(frame: NSRect(x: 16, y: y + 2, width: 340, height: 20))
+        let portInfo = NSTextField(frame: NSRect(x: 16, y: y - 16, width: 340, height: 20))
         portInfo.isEditable = false; portInfo.isBordered = false; portInfo.backgroundColor = .clear
         portInfo.font = NSFont.systemFont(ofSize: 11)
         portInfo.textColor = NSColor.secondaryLabelColor
         portInfo.stringValue = "当前服务端口: \(currentPort)  (可在「设置」页修改)"
-        view.addSubview(portInfo); y -= 28
+        view.addSubview(portInfo)
+        y -= 40
 
-        // 标题
-        sectionTitle("选择要配置的工具", y + 2); y -= 12
+        // --- Group: 选择工具 ---
+        let toolSeg = SettingsRowView.makeSegmented(labels: ["Claude Code", "Codex", "Cursor"], selected: 0) { _ in }
+        hookToolSegment = toolSeg
 
-        // Claude Code
-        claudeCodeCheck = NSButton(frame: NSRect(x: 24, y: y, width: 340, height: 24))
-        claudeCodeCheck.setButtonType(.radio)
-        claudeCodeCheck.title = "Claude Code（~/.claude/settings.json）"
-        claudeCodeCheck.state = .on
-        claudeCodeCheck.target = self; claudeCodeCheck.action = #selector(hookRadioAction)
-        view.addSubview(claudeCodeCheck); y -= 26
-        descLabel("配置 PreToolUse / PostToolUse / Stop 三个 Hook 事件。", y); y -= 36
+        let toolGroup = SettingsGroupView(header: "选择工具", rows: [
+            SettingsRowView(title: "配置目标", subtitle: "选择要配置 Hook 的工具",
+                            accessory: toolSeg, isFirst: true, isLast: true),
+        ])
+        toolGroup.frame.origin = NSPoint(x: 16, y: y - toolGroup.frame.height)
+        toolGroup.autoresizingMask = [.minXMargin, .maxYMargin]
+        view.addSubview(toolGroup)
+        y -= toolGroup.frame.height + 20
 
-        // Codex
-        codexCheck = NSButton(frame: NSRect(x: 24, y: y, width: 340, height: 24))
-        codexCheck.setButtonType(.radio)
-        codexCheck.title = "Codex（~/.codex/config.toml + hooks.json）"
-        codexCheck.state = .off
-        codexCheck.target = self; codexCheck.action = #selector(hookRadioAction)
-        view.addSubview(codexCheck); y -= 26
-        descLabel("配置 Codex 的 sandbox shell hook 事件。", y); y -= 36
+        // --- Group: 操作 ---
+        let applyBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 100, height: 28))
+        applyBtn.title = "应用配置"; applyBtn.bezelStyle = .rounded
+        applyBtn.font = NSFont.systemFont(ofSize: 12)
+        applyBtn.target = self; applyBtn.action = #selector(applyHookConfig)
 
-        // Cursor
-        cursorCheck = NSButton(frame: NSRect(x: 24, y: y, width: 340, height: 24))
-        cursorCheck.setButtonType(.radio)
-        cursorCheck.title = "Cursor（~/.cursor/settings.json）"
-        cursorCheck.state = .off
-        cursorCheck.target = self; cursorCheck.action = #selector(hookRadioAction)
-        view.addSubview(cursorCheck); y -= 26
-        descLabel("配置 Cursor Agent 的 Hook 事件（格式与 Claude Code 兼容）。", y); y -= 48
+        let copyBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 100, height: 28))
+        copyBtn.title = "复制配置"; copyBtn.bezelStyle = .rounded
+        copyBtn.font = NSFont.systemFont(ofSize: 12)
+        copyBtn.target = self; copyBtn.action = #selector(copyHookConfig)
 
-        // 说明
-        let info = NSTextField(frame: NSRect(x: 16, y: y, width: 348, height: 44))
-        info.isEditable = false; info.isBordered = false; info.backgroundColor = .clear
-        info.font = NSFont.systemFont(ofSize: 11)
-        info.textColor = NSColor(white: 0.40, alpha: 1.0)
-        info.stringValue = "点击「应用配置」将自动合并 Hook 到对应配置文件。\n已有配置会被保留，仅更新 CodeLight 相关的 Hook。"
-        info.cell?.wraps = true
-        view.addSubview(info); y -= 56
-
-        // 应用按钮
-        let applyBtn = NSButton(frame: NSRect(x: 60, y: y, width: 140, height: 40))
-        applyBtn.title = "应用配置"
-        applyBtn.bezelStyle = .rounded
-        applyBtn.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-        applyBtn.target = self
-        applyBtn.action = #selector(applyHookConfig)
-        view.addSubview(applyBtn)
-
-        // 复制按钮
-        let copyBtn = NSButton(frame: NSRect(x: 220, y: y, width: 140, height: 40))
-        copyBtn.title = "复制配置"
-        copyBtn.bezelStyle = .rounded
-        copyBtn.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-        copyBtn.target = self
-        copyBtn.action = #selector(copyHookConfig)
-        view.addSubview(copyBtn); y -= 52
+        let actionGroup = SettingsGroupView(header: "操作", rows: [
+            SettingsRowView(title: "应用配置", subtitle: "自动合并 Hook 到配置文件",
+                            accessory: applyBtn, isFirst: true),
+            SettingsRowView(title: "复制配置", subtitle: "复制到剪贴板",
+                            accessory: copyBtn, isLast: true),
+        ])
+        actionGroup.frame.origin = NSPoint(x: 16, y: y - actionGroup.frame.height)
+        actionGroup.autoresizingMask = [.minXMargin, .maxYMargin]
+        view.addSubview(actionGroup)
+        y -= actionGroup.frame.height + 16
 
         // 状态反馈
-        hookStatusLabel = NSTextField(frame: NSRect(x: 16, y: y, width: 348, height: 44))
+        hookStatusLabel = NSTextField(frame: NSRect(x: 16, y: y - 40, width: 348, height: 44))
         hookStatusLabel.isEditable = false; hookStatusLabel.isBordered = false; hookStatusLabel.backgroundColor = .clear
         hookStatusLabel.font = NSFont.systemFont(ofSize: 11)
         hookStatusLabel.textColor = NSColor(white: 0.45, alpha: 1.0)
@@ -1677,34 +1651,29 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         view.addSubview(hookStatusLabel)
     }
 
-    @objc func hookRadioAction(_ sender: NSButton) {
-        let radios = [claudeCodeCheck, codexCheck, cursorCheck]
-        for r in radios { if r != sender { r?.state = .off } }
-        sender.state = .on
-    }
-
     @objc func copyHookConfig() {
         let port = appDelegate.config.serverURL.components(separatedBy: ":").last ?? "8866"
+        let seg = hookToolSegment.selectedSegment
         var parts: [String] = []
 
-        if claudeCodeCheck.state == .on {
+        if seg == 0 {
             let hooks: [String: Any] = generateHooks(tool: "claude", port: port)
             let json = generateHooksJSON(hooks: hooks)
             parts.append("=== Claude Code — ~/.claude/settings.json ===\n\(json)")
         }
-        if codexCheck.state == .on {
+        if seg == 1 {
             let hooks: [String: Any] = generateHooks(tool: "codex", port: port)
             let json = generateHooksJSON(hooks: hooks)
             parts.append("=== Codex config.toml ===\n[features]\nhooks = true\n\n=== Codex hooks.json — ~/.codex/hooks.json ===\n\(json)")
         }
-        if cursorCheck.state == .on {
+        if seg == 2 {
             let hooks: [String: Any] = generateHooks(tool: "cursor", port: port)
             let json = generateHooksJSON(hooks: hooks)
             parts.append("=== Cursor — ~/.cursor/settings.json ===\n\(json)")
         }
 
         if parts.isEmpty {
-            hookStatusLabel.stringValue = "请至少勾选一个工具"
+            hookStatusLabel.stringValue = "请至少选择一个工具"
             hookStatusLabel.textColor = NSColor.systemOrange
             return
         }
@@ -1713,14 +1682,14 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
-        hookStatusLabel.stringValue = "✅ 已复制到剪贴板"
+        hookStatusLabel.stringValue = "已复制到剪贴板"
         hookStatusLabel.textColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
     }
 
     // Hook config methods moved to HookConfig.swift
 
     @objc func sliderChanged() {
-        pollLabel.stringValue = String(format: "%.1fs", pollSlider.doubleValue)
+        if pollLabel != nil { pollLabel.stringValue = String(format: "%.1fs", pollSlider.doubleValue) }
         opacityLabel.stringValue = "\(Int(opacitySlider.doubleValue * 100))%"
         blinkLabel.stringValue = String(format: "%.1fs", blinkSlider.doubleValue)
 
@@ -1731,6 +1700,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let w = appDelegate.lightWindow {
             w.alphaValue = opacitySlider.doubleValue
         }
+        appDelegate.config.save()
     }
 
     private var sizeRebuildTimer: Timer?
@@ -1738,6 +1708,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc func sizeSliderChanged() {
         sizeLabel.stringValue = "\(Int(sizeSlider.doubleValue))"
         appDelegate.config.windowSize = sizeSlider.doubleValue
+        appDelegate.config.save()
         // 防抖：松手后 0.15s 才 rebuild，避免拖动时不断重建
         sizeRebuildTimer?.invalidate()
         sizeRebuildTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
@@ -1751,6 +1722,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         appDelegate.config.horizontal = (appDelegate.config.displayMode == "horizontal")
         appDelegate.config.edgeBar = (appDelegate.config.displayMode == "edgebar") ? (appDelegate.config.edgeBar ?? "right") : nil
         horizontalCheck.state = appDelegate.config.horizontal ? .on : .off
+        appDelegate.config.save()
         appDelegate.rebuildWithCurrentConfig()
     }
 
@@ -1782,6 +1754,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc func mascotChanged() {
         let types = ["cow", "cat", "robot", "horse", "chicken"]
         let t = types[mascotSelect.indexOfSelectedItem]
+        appDelegate.config.mascotType = t
+        appDelegate.config.save()
         appDelegate.trafficContainer?.mascotType = t
         appDelegate.redView?.mascotType = t
     }
@@ -1790,6 +1764,11 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         colorWell.isHidden = themeSelect.indexOfSelectedItem != 2
         let themes = ["dark", "light", "custom"]
         let theme = themes[themeSelect.indexOfSelectedItem]
+        appDelegate.config.theme = theme
+        if theme == "custom", let hex = colorWell.color.hexString {
+            appDelegate.config.customColor = hex
+        }
+        appDelegate.config.save()
         appDelegate.shellView?.theme = theme
         if theme == "custom" {
             appDelegate.shellView?.customColor = colorWell.color
@@ -1895,60 +1874,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
             }
         } else if sender == showStatusCheck {
             c.showStatusText = sender.state == .on
-        } else if sender == autoLaunchCheck {
-            c.autoLaunch = sender.state == .on
-            if c.autoLaunch { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
-        } else if sender == notifyCheck {
-            c.notifyOnDone = sender.state == .on
-        } else if sender == permNotifyCheck {
-            c.notifyOnPermission = sender.state == .on
-        } else if sender == fullscreenCheck {
-            c.showOnFullscreen = sender.state == .on
-        } else if sender == floatingCheck {
-            c.isFloating = sender.state == .on
         }
         c.save()
         appDelegate.config = c
         appDelegate.restartWithNewConfig()
-    }
-
-    @objc func saveSettings() {
-        var c = appDelegate.config
-        c.serverURL = "http://127.0.0.1:" + serverField.stringValue
-        c.pollInterval = pollSlider.doubleValue
-        c.opacity = opacitySlider.doubleValue
-        c.blinkSpeed = blinkSlider.doubleValue
-        c.windowSize = sizeSlider.doubleValue
-        c.autoLaunch = autoLaunchCheck.state == .on
-        c.notifyOnDone = notifyCheck.state == .on
-        c.notifyOnPermission = permNotifyCheck.state == .on
-        // 保存权限模式
-        if permModeAlwaysRadio != nil {
-            if permModeAlwaysRadio.state == .on { c.permissionMode = "always" }
-            else if permModeRulesRadio.state == .on { c.permissionMode = "rules" }
-            else { c.permissionMode = "popup" }
-            c.autoAllowPermission = (c.permissionMode == "always")
-        } else {
-            c.autoAllowPermission = autoAllowCheck.state == .on
-        }
-        c.completionSound = soundSelect.titleOfSelectedItem ?? "Glass"
-        c.showOnFullscreen = fullscreenCheck.state == .on
-        c.horizontal = horizontalCheck.state == .on
-        let modes = ["vertical", "horizontal", "mini", "edgebar"]
-        c.displayMode = modes[displayModeSegment.indexOfSelectedItem]
-        c.horizontal = (c.displayMode == "horizontal")
-        c.edgeBar = (c.displayMode == "edgebar") ? (c.edgeBar ?? "right") : nil
-        c.showStatusText = showStatusCheck.state == .on
-        c.isFloating = floatingCheck.state == .on
-        c.mascotType = ["cow", "cat", "robot", "horse", "chicken"][mascotSelect.indexOfSelectedItem]
-        c.theme = ["dark", "light", "custom"][themeSelect.indexOfSelectedItem]
-        if let hex = colorWell.color.hexString { c.customColor = hex }
-        c.weatherThemeEnabled = weatherCheck.state == .on
-        appDelegate.log("[保存] mascotType=\(c.mascotType) theme=\(c.theme) weather=\(c.weatherThemeEnabled)")
-        c.save()
-        if c.autoLaunch { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
-        appDelegate.restartWithNewConfig()
-        window?.close()
     }
 
     @objc func checkForUpdate() {
@@ -1994,13 +1923,301 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    // MARK: - Advanced Tab (WebDAV Sync)
+
+    private func buildAdvancedTab(_ view: NSView, _ c: AppConfig) {
+        var y: CGFloat = 16
+        let contentW = view.bounds.width - 32
+
+        // WebDAV 内容直接平铺
+        let webdavContent = FlippedView(frame: NSRect(x: 16, y: y, width: contentW, height: 400))
+        buildWebDAVContent(webdavContent, c, width: contentW)
+        // 计算实际内容高度
+        var maxY: CGFloat = 0
+        for sub in webdavContent.subviews {
+            let bottom = sub.frame.origin.y + sub.frame.height
+            if bottom > maxY { maxY = bottom }
+        }
+        webdavContent.frame.size.height = maxY + 16
+        view.addSubview(webdavContent)
+        y += webdavContent.frame.height + 16
+
+        // 运行日志
+        let logContent = FlippedView(frame: NSRect(x: 16, y: y, width: contentW, height: 220))
+        buildLogContent(logContent, width: contentW)
+        var logMaxY: CGFloat = 0
+        for sub in logContent.subviews {
+            let bottom = sub.frame.origin.y + sub.frame.height
+            if bottom > logMaxY { logMaxY = bottom }
+        }
+        logContent.frame.size.height = logMaxY + 16
+        view.addSubview(logContent)
+    }
+
+    private func buildWebDAVContent(_ view: NSView, _ c: AppConfig, width: CGFloat) {
+        let contentW = width
+        var y: CGFloat = 0
+
+        // Description
+        let desc = NSTextField(frame: NSRect(x: 10, y: y, width: contentW - 20, height: 16))
+        desc.isEditable = false; desc.isBordered = false; desc.backgroundColor = .clear; desc.drawsBackground = false
+        desc.font = NSFont.systemFont(ofSize: 11)
+        desc.textColor = NSColor.tertiaryLabelColor
+        desc.stringValue = "通过 WebDAV 同步配置到坚果云、NextCloud、群晖等"
+        view.addSubview(desc)
+        y += 24
+
+        // --- Group: WebDAV 连接 ---
+        let urlField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        urlField.font = NSFont.systemFont(ofSize: 12)
+        urlField.placeholderString = "https://dav.jianguoyun.com/dav/"
+        urlField.stringValue = c.webdavURL
+        urlField.lineBreakMode = .byTruncatingMiddle
+        webdavURLField = urlField
+
+        let userField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        userField.font = NSFont.systemFont(ofSize: 12)
+        userField.placeholderString = "邮箱或用户名"
+        userField.stringValue = c.webdavUser
+        webdavUserField = userField
+
+        let passField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        passField.font = NSFont.systemFont(ofSize: 12)
+        passField.placeholderString = "应用专用密码"
+        passField.stringValue = c.webdavPass
+        webdavPassField = passField
+
+        let pathField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        pathField.font = NSFont.systemFont(ofSize: 12)
+        pathField.placeholderString = "/codelight/config.json"
+        pathField.stringValue = c.webdavPath
+        pathField.lineBreakMode = .byTruncatingMiddle
+        webdavPathField = pathField
+
+        let connectGroup = SettingsGroupView(header: "WebDAV 连接", rows: [
+            SettingsRowView(title: "服务器地址", accessory: urlField, isFirst: true),
+            SettingsRowView(title: "用户名", accessory: userField),
+            SettingsRowView(title: "密码", accessory: passField),
+            SettingsRowView(title: "远程路径", accessory: pathField, isLast: true),
+        ])
+        connectGroup.frame.origin = NSPoint(x: 0, y: y)
+        connectGroup.autoresizingMask = .width
+        view.addSubview(connectGroup)
+        y += connectGroup.frame.height + 8
+
+        // --- Group: 同步 ---
+        let autoSyncToggle = SettingsRowView.makeToggle(isOn: c.webdavAutoSync) { [weak self] isOn in
+            guard let self = self else { return }
+            self.appDelegate.config.webdavAutoSync = isOn
+            self.appDelegate.config.save()
+        }
+        webdavAutoSyncCheck = autoSyncToggle
+
+        // Buttons row
+        let btnW: CGFloat = 80, btnGap: CGFloat = 8
+        let testBtn = NSButton(frame: NSRect(x: 0, y: 0, width: btnW, height: 26))
+        testBtn.title = "测试连接"; testBtn.bezelStyle = .rounded
+        testBtn.font = NSFont.systemFont(ofSize: 11)
+        testBtn.target = self; testBtn.action = #selector(webdavTestConnection(_:))
+
+        let uploadBtn = NSButton(frame: NSRect(x: btnW + btnGap, y: 0, width: btnW, height: 26))
+        uploadBtn.title = "上传配置"; uploadBtn.bezelStyle = .rounded
+        uploadBtn.font = NSFont.systemFont(ofSize: 11)
+        uploadBtn.target = self; uploadBtn.action = #selector(webdavUpload(_:))
+
+        let downloadBtn = NSButton(frame: NSRect(x: (btnW + btnGap) * 2, y: 0, width: btnW, height: 26))
+        downloadBtn.title = "下载配置"; downloadBtn.bezelStyle = .rounded
+        downloadBtn.font = NSFont.systemFont(ofSize: 11)
+        downloadBtn.target = self; downloadBtn.action = #selector(webdavDownload(_:))
+
+        let buttonsView = NSView(frame: NSRect(x: 0, y: 0, width: (btnW + btnGap) * 3, height: 26))
+        buttonsView.addSubview(testBtn)
+        buttonsView.addSubview(uploadBtn)
+        buttonsView.addSubview(downloadBtn)
+
+        let syncGroup = SettingsGroupView(header: "同步", rows: [
+            SettingsRowView(title: "自动同步", subtitle: "保存设置时自动上传",
+                            accessory: autoSyncToggle, isFirst: true),
+            SettingsRowView(title: "操作", accessory: buttonsView, isLast: true),
+        ])
+        syncGroup.frame.origin = NSPoint(x: 0, y: y)
+        syncGroup.autoresizingMask = .width
+        view.addSubview(syncGroup)
+        y += syncGroup.frame.height + 8
+
+        // Status label
+        webdavStatusLabel = NSTextField(frame: NSRect(x: 10, y: y, width: contentW - 20, height: 18))
+        webdavStatusLabel.isEditable = false; webdavStatusLabel.isBordered = false
+        webdavStatusLabel.backgroundColor = .clear; webdavStatusLabel.drawsBackground = false
+        webdavStatusLabel.font = NSFont.systemFont(ofSize: 11)
+        webdavStatusLabel.textColor = NSColor.secondaryLabelColor
+        webdavStatusLabel.stringValue = ""
+        view.addSubview(webdavStatusLabel)
+        y += 24
+
+        // Help text
+        let helpText = NSTextField(frame: NSRect(x: 10, y: y, width: contentW - 20, height: 16))
+        helpText.isEditable = false; helpText.isBordered = false; helpText.backgroundColor = .clear; helpText.drawsBackground = false
+        helpText.font = NSFont.systemFont(ofSize: 10)
+        helpText.textColor = NSColor.tertiaryLabelColor
+        helpText.stringValue = "\u{1f4a1} 坚果云用应用专用密码 | 同步：偏好设置，不含窗口位置"
+        view.addSubview(helpText)
+    }
+
+    private func buildLogContent(_ view: NSView, width: CGFloat) {
+        let rx: CGFloat = 10
+        let logW = width - rx * 2
+
+        let refreshLogBtn = NSButton(frame: NSRect(x: rx, y: 0, width: 70, height: 24))
+        refreshLogBtn.title = "刷新"; refreshLogBtn.bezelStyle = .rounded
+        refreshLogBtn.font = NSFont.systemFont(ofSize: 11)
+        refreshLogBtn.target = self; refreshLogBtn.action = #selector(refreshLog(_:))
+        view.addSubview(refreshLogBtn)
+
+        let clearLogBtn = NSButton(frame: NSRect(x: rx + 78, y: 0, width: 70, height: 24))
+        clearLogBtn.title = "清空"; clearLogBtn.bezelStyle = .rounded
+        clearLogBtn.font = NSFont.systemFont(ofSize: 11)
+        clearLogBtn.target = self; clearLogBtn.action = #selector(clearLog(_:))
+        view.addSubview(clearLogBtn)
+
+        logTextView = NSTextView(frame: NSRect(x: rx, y: 28, width: logW, height: 180))
+        logTextView.isEditable = false
+        logTextView.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        logTextView.textColor = NSColor(white: 0.7, alpha: 1.0)
+        logTextView.backgroundColor = NSColor(white: 0.08, alpha: 1.0)
+        logTextView.drawsBackground = true
+        logTextView.isRichText = false
+        view.addSubview(logTextView)
+    }
+
+    // MARK: - Advanced Tab Helpers
+
+    private func fieldLabel(_ text: String, x: CGFloat, lx: CGFloat, y: CGFloat) -> NSTextField {
+        let l = NSTextField(frame: NSRect(x: x, y: y, width: lx - x - 6, height: 20))
+        l.isEditable = false; l.isBordered = false; l.backgroundColor = .clear; l.drawsBackground = false
+        l.font = NSFont.systemFont(ofSize: 12)
+        l.stringValue = text; l.alignment = .right
+        return l
+    }
+
+    private func labeledField(_ label: String, placeholder: String, value: String, x: CGFloat, lx: CGFloat, y: CGFloat, fieldW: CGFloat, in view: NSView) -> NSTextField {
+        let l = fieldLabel(label, x: x, lx: lx, y: y)
+        view.addSubview(l)
+        let f = NSTextField(frame: NSRect(x: lx, y: y, width: fieldW, height: 22))
+        f.font = NSFont.systemFont(ofSize: 12)
+        f.placeholderString = placeholder
+        f.stringValue = value
+        f.lineBreakMode = .byTruncatingMiddle
+        view.addSubview(f)
+        return f
+    }
+
+    @objc private func refreshLog(_ sender: NSButton) {
+        loadLogContent()
+    }
+
+    @objc private func clearLog(_ sender: NSButton) {
+        let path = "/tmp/codelight.log"
+        try? "".write(toFile: path, atomically: true, encoding: .utf8)
+        if logTextView != nil { logTextView.string = "" }
+    }
+
+    private func loadLogContent() {
+        guard logTextView != nil else { return }
+        let path = "/tmp/codelight.log"
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+            logTextView.string = "（暂无日志）"
+            return
+        }
+        let lines = content.components(separatedBy: "\n")
+        let tail = lines.suffix(200).joined(separator: "\n")
+        logTextView.string = tail
+        logTextView.scrollRangeToVisible(NSRange(location: tail.count, length: 0))
+    }
+
+    @objc private func webdavTestConnection(_ sender: NSButton) {
+        var c = appDelegate.config
+        c.webdavURL = webdavURLField.stringValue.trimmingCharacters(in: .whitespaces)
+        c.webdavUser = webdavUserField.stringValue
+        c.webdavPass = webdavPassField.stringValue
+
+        webdavStatusLabel.stringValue = "正在测试连接..."
+        webdavStatusLabel.textColor = NSColor.secondaryLabelColor
+        sender.isEnabled = false
+
+        WebDAVSync.shared.testConnection(c) { [weak self] success, msg in
+            DispatchQueue.main.async {
+                self?.webdavStatusLabel.stringValue = msg
+                self?.webdavStatusLabel.textColor = success ? NSColor.systemGreen : NSColor.systemRed
+                sender.isEnabled = true
+            }
+        }
+    }
+
+    @objc private func webdavUpload(_ sender: NSButton) {
+        var c = collectWebDAVConfig()
+        c.webdavAutoSync = webdavAutoSyncCheck.state == .on
+
+        webdavStatusLabel.stringValue = "正在上传..."
+        webdavStatusLabel.textColor = NSColor.secondaryLabelColor
+        sender.isEnabled = false
+
+        WebDAVSync.shared.uploadConfig(c) { [weak self] success, msg in
+            DispatchQueue.main.async {
+                self?.webdavStatusLabel.stringValue = msg
+                self?.webdavStatusLabel.textColor = success ? NSColor.systemGreen : NSColor.systemRed
+                sender.isEnabled = true
+            }
+        }
+    }
+
+    @objc private func webdavDownload(_ sender: NSButton) {
+        let c = collectWebDAVConfig()
+
+        webdavStatusLabel.stringValue = "正在下载..."
+        webdavStatusLabel.textColor = NSColor.secondaryLabelColor
+        sender.isEnabled = false
+
+        WebDAVSync.shared.downloadConfig(c) { [weak self] (success: Bool, msg: String, json: [String: Any]?) in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                sender.isEnabled = true
+                if success, let json = json {
+                    var config = self.appDelegate.config
+                    config.applyJSON(json)
+                    config.webdavURL = c.webdavURL
+                    config.webdavUser = c.webdavUser
+                    config.webdavPass = c.webdavPass
+                    config.webdavPath = c.webdavPath
+                    config.save()
+                    self.syncFromConfig()
+                    self.webdavStatusLabel.stringValue = "下载成功，配置已应用 ✓"
+                    self.webdavStatusLabel.textColor = NSColor.systemGreen
+                } else {
+                    self.webdavStatusLabel.stringValue = msg
+                    self.webdavStatusLabel.textColor = NSColor.systemRed
+                }
+            }
+        }
+    }
+
+    private func collectWebDAVConfig() -> AppConfig {
+        var c = appDelegate.config
+        c.webdavURL = webdavURLField.stringValue.trimmingCharacters(in: .whitespaces)
+        c.webdavUser = webdavUserField.stringValue
+        c.webdavPass = webdavPassField.stringValue
+        c.webdavPath = webdavPathField.stringValue.trimmingCharacters(in: .whitespaces)
+        if c.webdavPath.isEmpty { c.webdavPath = "/codelight/config.json" }
+        return c
+    }
+
     // MARK: - Stats Tab
 
     private func buildStatsTab(_ view: NSView, _ c: AppConfig) {
         let stats = StatsManager.shared.todayStats()
         let weekData = StatsManager.shared.weekStats()
         var y: CGFloat = 16
-        let cw: CGFloat = 400
+        let cw: CGFloat = view.bounds.width - 32
 
         // Dark theme fixed colors
         let titleColor = NSColor(white: 1.0, alpha: 0.5)

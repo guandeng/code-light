@@ -33,17 +33,19 @@ extension SettingsWindowController {
         let port = appDelegate.config.serverURL.components(separatedBy: ":").last ?? "8866"
         var results: [String] = []
 
+        let seg = hookToolSegment.selectedSegment
+
         // --- Claude Code ---
-        if claudeCodeCheck.state == .on {
+        if seg == 0 {
             let path = home + "/.claude/settings.json"
             let hooks = generateHooks(tool: "claude", port: port)
             let ok = writeHooksToFile(path: path, hooks: hooks, fm: fm)
-            results.append(ok ? "✅ Claude Code" : "❌ Claude Code")
+            results.append(ok ? "Claude Code ok" : "Claude Code failed")
             appDelegate.log("[Hook] Claude Code: \(ok ? "ok" : "failed") \(path)")
         }
 
         // --- Codex ---
-        if codexCheck.state == .on {
+        if seg == 1 {
             let dir = home + "/.codex"
             if !fm.fileExists(atPath: dir) { try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true) }
             // 1) config.toml: 启用 hooks
@@ -55,27 +57,28 @@ extension SettingsWindowController {
             let hooksPath = dir + "/hooks.json"
             let hooks = generateHooks(tool: "codex", port: port)
             if !writeHooksToFile(path: hooksPath, hooks: hooks, fm: fm) { codexOk = false }
-            results.append(codexOk ? "✅ Codex" : "❌ Codex")
+            results.append(codexOk ? "Codex ok" : "Codex failed")
             appDelegate.log("[Hook] Codex: \(codexOk ? "ok" : "failed") \(dir)/config.toml + hooks.json")
         }
 
         // --- Cursor ---
-        if cursorCheck.state == .on {
+        if seg == 2 {
             let dir = home + "/.cursor"
             if !fm.fileExists(atPath: dir) { try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true) }
             let path = dir + "/settings.json"
             let hooks = generateHooks(tool: "cursor", port: port)
             let ok = writeHooksToFile(path: path, hooks: hooks, fm: fm)
-            results.append(ok ? "✅ Cursor" : "❌ Cursor")
+            results.append(ok ? "Cursor ok" : "Cursor failed")
             appDelegate.log("[Hook] Cursor: \(ok ? "ok" : "failed") \(path)")
         }
 
         if results.isEmpty {
-            hookStatusLabel.stringValue = "请至少勾选一个工具"
+            hookStatusLabel.stringValue = "请至少选择一个工具"
             hookStatusLabel.textColor = NSColor.systemOrange
         } else {
             hookStatusLabel.stringValue = results.joined(separator: "  ")
-            hookStatusLabel.textColor = results.allSatisfy({ $0.hasPrefix("✅") })
+            let allOk = results.allSatisfy { $0.hasSuffix("ok") }
+            hookStatusLabel.textColor = allOk
                 ? NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
                 : NSColor.systemRed
         }

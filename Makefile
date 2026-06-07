@@ -2,26 +2,30 @@ VERSION ?= 1.0.0
 APP_NAME = CodeLight
 APP_BUNDLE = $(APP_NAME).app
 ZIP_FILE = $(APP_NAME)-v$(VERSION).zip
-SWIFT_SRC = main.swift Config.swift HotkeyManager.swift Weather.swift UI.swift CodeLight.swift PermissionBubble.swift HookConfig.swift MenuBuilder.swift LightWindowBuilder.swift LightAnimator.swift
+SWIFT_SRC = main.swift Config.swift HotkeyManager.swift Weather.swift UI.swift CodeLight.swift PermissionBubble.swift HookConfig.swift MenuBuilder.swift LightWindowBuilder.swift LightAnimator.swift WebDAVSync.swift SettingsUI.swift
 CLI_SRC = codelight-cli.swift
 SERVER_SRC = light-server.py
 BINARY = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 RESOURCES = $(APP_BUNDLE)/Contents/Resources
 
-.PHONY: build cli clean package release
-.PHONY: build clean package release test test-unit test-integration
+.PHONY: build cli clean package release test test-unit test-integration
 
-build: ## 编译 Swift 并更新 App Bundle
+build: ## 编译 Universal Binary (arm64 + x86_64)
 	swiftc -O -target arm64-apple-macosx13.0 \
 		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
-		-o $(BINARY) $(SWIFT_SRC)
+		-o $(BINARY)-arm64 $(SWIFT_SRC)
+	swiftc -O -target x86_64-apple-macosx13.0 \
+		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
+		-o $(BINARY)-x86_64 $(SWIFT_SRC)
+	lipo -create -output $(BINARY) $(BINARY)-arm64 $(BINARY)-x86_64
+	rm -f $(BINARY)-arm64 $(BINARY)-x86_64
 	-[ -f $(SERVER_SRC) ] && cp $(SERVER_SRC) $(RESOURCES)/light-server.py || true
 	codesign --force --deep --sign - $(APP_BUNDLE)
-	@echo "✅ 编译完成: $(APP_BUNDLE)"
+	@echo "✅ 编译完成: $(APP_BUNDLE) (Universal Binary)"
 
-cli: ## 编译 CLI 工具
-	swiftc -O -o codelight $(CLI_SRC)
-	@echo "✅ CLI 编译完成: codelight"
+cli: ## 编译 CLI 工具 (Universal Binary)
+	swiftc -O -arch arm64 -arch x86_64 -o codelight $(CLI_SRC)
+	@echo "✅ CLI 编译完成: codelight (Universal Binary)"
 
 clean: ## 清理编译产物
 	rm -f $(BINARY) codelight

@@ -38,30 +38,50 @@
    ```bash
    make release VERSION=X.Y.Z
    ```
-   会自动：编译 → codesign → 打包 zip → 创建 GitHub Release
+   会自动：编译 Universal Binary (arm64 + x86_64) → codesign → 打包 zip → 创建 GitHub Release
 
-   > **注意**：GitHub Release 的 description 必须说明本次发布包含的功能/改进，不要留空。
+   > **注意**：
+   > - GitHub Release 的 description 必须说明本次发布包含的功能/改进，不要留空。
+   > - 编译产物为 Universal Binary，同时支持 Apple Silicon (arm64) 和 Intel (x86_64)。
 
 4. **验证**
    - 确认 GitHub Release 页面出现新版本
    - 确认 zip 可下载
+   - 运行 `lipo -info CodeLight.app/Contents/MacOS/CodeLight` 确认包含 `x86_64 arm64`
 
 ## 架构
 
 - `main.swift` — 入口，创建 AppDelegate 和 status bar
 - `CodeLight.swift` — 核心：LightServer (NWListener HTTP)、灯窗口管理、设置面板、Hook 生成、权限气泡
 - `Config.swift` — AppConfig (UserDefaults 持久化)、状态定义 STATES、城市列表
-- `UI.swift` — 纯绘制：ShellView、RealTrafficLightView、吉祥物绘制 (cow/cat/robot/horse/chicken)
+- `UI.swift` — 纯绘制：ShellView、RealTrafficLightView、吉祥物绘制、TimelineView
 - `Weather.swift` — Open-Meteo 天气 API、WeatherView 渐变背景
+- `HotkeyManager.swift` — 全局快捷键管理（NSEvent monitor）
+- `MenuBuilder.swift` — macOS 标准应用菜单（关于/偏好设置/视图/窗口/帮助）
+- `PermissionBubble.swift` — 权限请求气泡弹窗
+- `HookConfig.swift` — Claude Code Hook 配置管理
+- `LightWindowBuilder.swift` — 灯窗口构建
+- `LightAnimator.swift` — 灯动画逻辑
+- `WebDAVSync.swift` — WebDAV 配置同步
+- `SettingsUI.swift` — 设置面板组件（SettingsRowView、SettingsGroupView、NSSwitch 开关）
+- `codelight-cli.swift` — CLI 终端工具（state/sessions/history/watch）
 - `Makefile` — build/package/release 自动化
 
 ## 关键约束
 
-- **macOS 13.0+** (target: `arm64-apple-macosx13.0`)
+- **macOS 13.0+**，Universal Binary 同时支持 arm64 和 x86_64
 - 不能用 `cgPath`（macOS 14+），用 `NSBezierPath` + `draw()` 代替
 - NSButton 不支持 `textColor`，用 `attributedTitle` 或 `contentTintColor`
-- `NSButton.switch` checkbox 在自定义深色面板上不可见，用自定义按钮模拟
 - 非活跃灯用 `lampColor.withAlphaComponent(0.05~0.08)` 淡色，不用纯黑
+
+## 设置面板规范
+
+- macOS System Settings 风格：分组圆角卡片 + 右侧 NSSwitch 开关
+- **所有控件即时生效**：切换即 `config.save()` + rebuild，无需保存按钮
+- 使用 `SettingsUI.swift` 的 `SettingsRowView` + `SettingsGroupView` 组件
+- **不带图标**（`SettingsRowView` 不传 `icon` 参数）
+- 控件工厂方法：`makeToggle`、`makeSlider`、`makePopup`、`makeSegmented`
+- 使用 `NSSwitch`（非 `NSButton.switch`）作为开关控件
 
 ## Hook 配置
 
