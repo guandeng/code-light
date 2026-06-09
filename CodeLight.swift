@@ -817,6 +817,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var skillsContainerHeight: CGFloat = 0
     var skillsRemoteItems: [SkillItem] = []
     var skillsRemoteContents: [String: String] = [:]
+    var installedFilterSegment: NSSegmentedControl!
     let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "☁️ 高级", "📊 统计", "🧩 技能"]
 
     init(appDelegate: AppDelegate) {

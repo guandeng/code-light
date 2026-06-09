@@ -188,17 +188,19 @@ extension SettingsWindowController {
 
     // MARK: - Rebuild Installed List
 
+    @objc func installedFilterChanged(_ sender: NSSegmentedControl) {
+        rebuildSkillsList()
+    }
+
     func rebuildSkillsList() {
         guard let listContainer = skillsListContainer else { return }
         listContainer.subviews.forEach { $0.removeFromSuperview() }
 
-        let items = SkillsManager.shared.scanAll()
+        let allItems = SkillsManager.shared.scanAll()
+        let skills = allItems.filter { $0.type == .skill }
+        let commands = allItems.filter { $0.type == .command }
         var y: CGFloat = 0
         let listW = listContainer.frame.width
-
-        // 按类型分组
-        let skills = items.filter { $0.type == .skill }
-        let commands = items.filter { $0.type == .command }
 
         if skills.isEmpty && commands.isEmpty {
             let empty = NSTextField(frame: NSRect(x: 16, y: 8, width: listW - 32, height: 40))
@@ -213,52 +215,68 @@ extension SettingsWindowController {
             return
         }
 
-        // 技能组
-        if !skills.isEmpty {
-            let rows = skills.enumerated().map { (idx, item) -> SettingsRowView in
+        // 筛选分段控件
+        let filterSeg = NSSegmentedControl(labels: ["全部", "技能", "命令"], trackingMode: .selectOne, target: self, action: #selector(installedFilterChanged(_:)))
+        if installedFilterSegment == nil {
+            filterSeg.selectedSegment = 0
+            installedFilterSegment = filterSeg
+        } else {
+            installedFilterSegment.target = self
+            installedFilterSegment.action = #selector(installedFilterChanged(_:))
+        }
+        installedFilterSegment.frame = NSRect(x: 0, y: 0, width: 200, height: 26)
+        installedFilterSegment.sizeToFit()
+        let filterGroup = SettingsGroupView(header: nil, rows: [
+            SettingsRowView(title: "筛选", accessory: installedFilterSegment, isFirst: true, isLast: true),
+        ])
+        filterGroup.frame.origin = NSPoint(x: 0, y: y)
+        filterGroup.autoresizingMask = .width
+        listContainer.addSubview(filterGroup)
+        y += filterGroup.frame.height + 8
+
+        let filterIdx = installedFilterSegment.selectedSegment
+        var displayItems: [SkillItem]
+        switch filterIdx {
+        case 1: displayItems = skills
+        case 2: displayItems = commands
+        default: displayItems = allItems
+        }
+
+        // 列表组
+        if displayItems.isEmpty {
+            let empty = NSTextField(frame: NSRect(x: 16, y: y + 4, width: listW - 32, height: 24))
+            empty.isEditable = false; empty.isBordered = false; empty.backgroundColor = .clear
+            empty.font = NSFont.systemFont(ofSize: 12)
+            empty.textColor = NSColor.tertiaryLabelColor
+            empty.stringValue = "当前筛选下无内容"
+            empty.alignment = .center
+            listContainer.addSubview(empty)
+            y += 32
+        } else {
+            let rows = displayItems.enumerated().map { (idx, item) -> SettingsRowView in
                 let btn = NSButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
                 btn.bezelStyle = .rounded
                 btn.font = NSFont.systemFont(ofSize: 11)
+                // tag 用 displayItems 索引 → 在 uninstall 时从 allItems 找对应项
                 btn.tag = idx
+                let displayName = item.type == .command ? "/\(item.name)" : item.name
                 return SettingsRowView(
-                    title: item.name,
+                    title: displayName,
                     subtitle: item.description.isEmpty ? nil : String(item.description.prefix(80)),
                     accessory: btn,
                     isFirst: idx == 0,
-                    isLast: idx == skills.count - 1 && commands.isEmpty
+                    isLast: idx == displayItems.count - 1
                 )
             }
-            let group = SettingsGroupView(header: "技能 (\(skills.count))", rows: rows)
+            let header = filterIdx == 0 ? "已安装 (\(displayItems.count))" : (filterIdx == 1 ? "技能 (\(displayItems.count))" : "命令 (\(displayItems.count))")
+            let group = SettingsGroupView(header: header, rows: rows)
             group.frame.origin = NSPoint(x: 0, y: y)
             group.autoresizingMask = .width
             listContainer.addSubview(group)
             y += group.frame.height + 8
         }
 
-        // 命令组
-        if !commands.isEmpty {
-            let offset = skills.count
-            let rows = commands.enumerated().map { (idx, item) -> SettingsRowView in
-                let btn = NSButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
-                btn.bezelStyle = .rounded
-                btn.font = NSFont.systemFont(ofSize: 11)
-                btn.tag = offset + idx
-                return SettingsRowView(
-                    title: "/\(item.name)",
-                    subtitle: item.description.isEmpty ? nil : String(item.description.prefix(80)),
-                    accessory: btn,
-                    isFirst: idx == 0,
-                    isLast: idx == commands.count - 1
-                )
-            }
-            let group = SettingsGroupView(header: "命令 (\(commands.count))", rows: rows)
-            group.frame.origin = NSPoint(x: 0, y: y)
-            group.autoresizingMask = .width
-            listContainer.addSubview(group)
-            y += group.frame.height + 8
-        }
-
-        skillsStatusLabel.stringValue = "已安装 \(items.count) 个（技能 \(skills.count)，命令 \(commands.count)）"
+        skillsStatusLabel.stringValue = "已安装 \(allItems.count) 个（技能 \(skills.count)，命令 \(commands.count)）"
         adjustSkillsListHeight(listContainer, maxY: y)
     }
 
@@ -372,9 +390,16 @@ extension SettingsWindowController {
 
     @objc func skillsUninstallItem(_ sender: NSButton) {
         let allItems = SkillsManager.shared.scanAll()
+        let filterIdx = installedFilterSegment?.selectedSegment ?? 0
+        let displayItems: [SkillItem]
+        switch filterIdx {
+        case 1: displayItems = allItems.filter { $0.type == .skill }
+        case 2: displayItems = allItems.filter { $0.type == .command }
+        default: displayItems = allItems
+        }
         let idx = sender.tag
-        guard idx < allItems.count else { return }
-        let item = allItems[idx]
+        guard idx < displayItems.count else { return }
+        let item = displayItems[idx]
 
         if SkillsManager.shared.uninstall(item) {
             // 更新远程列表的安装状态
