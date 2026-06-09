@@ -13,6 +13,8 @@ class SettingsRowView: NSView {
     var accessoryView: NSView?
     var iconContainer: NSView?
     private var separator: NSView?
+    private var textStartX: CGFloat = 12
+    private var accWidth: CGFloat = 0
 
     init(icon: String? = nil, iconColor: NSColor? = nil,
          title: String, subtitle: String? = nil,
@@ -62,16 +64,17 @@ class SettingsRowView: NSView {
             x += iconSize + 10
         }
 
+        textStartX = x
+
         // 标题
         titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         titleLabel.textColor = NSColor.labelColor
-        titleLabel.frame = NSRect(x: x, y: subtitle != nil ? rowH / 2 + 2 : 0, width: 200, height: 20)
-        titleLabel.sizeToFit()
-        let titleW = titleLabel.frame.width
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.usesSingleLineMode = false
         titleLabel.frame = NSRect(x: x,
                                    y: subtitle != nil ? rowH / 2 + 2 : (rowH - 20) / 2,
-                                   width: titleW, height: 20)
+                                   width: 200, height: 20)
         addSubview(titleLabel)
 
         // 副标题
@@ -79,13 +82,15 @@ class SettingsRowView: NSView {
             subtitleLabel = NSTextField(labelWithString: sub)
             subtitleLabel?.font = NSFont.systemFont(ofSize: 11)
             subtitleLabel?.textColor = NSColor.tertiaryLabelColor
+            subtitleLabel?.lineBreakMode = .byWordWrapping
+            subtitleLabel?.usesSingleLineMode = false
             subtitleLabel?.frame = NSRect(x: x, y: rowH / 2 - 16, width: 300, height: 16)
-            subtitleLabel?.sizeToFit()
             addSubview(subtitleLabel!)
         }
 
         // 右侧控件
         if let acc = accessory {
+            accWidth = acc.frame.width + 28
             let accW = acc.frame.width
             let accH = acc.frame.height
             acc.frame = NSRect(x: bounds.width - accW - 14,
@@ -110,19 +115,79 @@ class SettingsRowView: NSView {
 
     override func layout() {
         super.layout()
+        let w = bounds.width
+
         // 重新定位 accessory 到右侧
         if let acc = accessoryView {
             let accW = acc.frame.width
             let accH = acc.frame.height
-            acc.frame = NSRect(x: bounds.width - accW - 14,
+            acc.frame = NSRect(x: w - accW - 14,
                                y: (bounds.height - accH) / 2,
                                width: accW, height: accH)
         }
+
+        // 文本区域宽度
+        let textW = max(w - textStartX - accWidth - 14, 100)
+
+        // 计算文字高度
+        let titleFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+        let titleRect = (titleLabel.stringValue as NSString).boundingRect(
+            with: NSSize(width: textW, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: titleFont]
+        )
+        let titleH = ceil(titleRect.height)
+
+        var subH: CGFloat = 0
+        if let sub = subtitleLabel {
+            let subFont = NSFont.systemFont(ofSize: 11)
+            let subRect = (sub.stringValue as NSString).boundingRect(
+                with: NSSize(width: textW, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: subFont]
+            )
+            subH = ceil(subRect.height)
+        }
+
+        // 定位标签
+        if subH > 0 {
+            let totalTextH = titleH + 4 + subH
+            let blockBottom = (bounds.height - totalTextH) / 2
+            subtitleLabel?.frame = NSRect(x: textStartX, y: blockBottom, width: textW, height: subH)
+            titleLabel.frame = NSRect(x: textStartX, y: blockBottom + subH + 4, width: textW, height: titleH)
+        } else {
+            titleLabel.frame = NSRect(x: textStartX, y: (bounds.height - titleH) / 2, width: textW, height: titleH)
+        }
+
         // 重新定位分隔线
-        separator?.frame = NSRect(x: separator?.frame.origin.x ?? 46,
-                                   y: 0,
-                                   width: bounds.width - (separator?.frame.origin.x ?? 46),
-                                   height: 0.5)
+        separator?.frame = NSRect(x: textStartX, y: 0,
+                                   width: w - textStartX, height: 0.5)
+    }
+
+    /// 根据宽度计算行高（支持文字换行）
+    func preferredHeight(for width: CGFloat) -> CGFloat {
+        let textW = max(width - textStartX - accWidth - 14, 100)
+        let titleFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+        let titleRect = (titleLabel.stringValue as NSString).boundingRect(
+            with: NSSize(width: textW, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: titleFont]
+        )
+        let titleH = ceil(titleRect.height)
+
+        var subH: CGFloat = 0
+        if let sub = subtitleLabel {
+            let subFont = NSFont.systemFont(ofSize: 11)
+            let subRect = (sub.stringValue as NSString).boundingRect(
+                with: NSSize(width: textW, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: subFont]
+            )
+            subH = ceil(subRect.height)
+        }
+
+        let totalH: CGFloat = subH > 0 ? titleH + subH + 20 : titleH + 24
+        return max(totalH, subH > 0 ? 56 : 44)
     }
 }
 
@@ -169,8 +234,9 @@ class SettingsGroupView: NSView {
         let w = bounds.width
         var y: CGFloat = 0
         for row in rows {
-            row.frame = NSRect(x: 0, y: y, width: w, height: row.frame.height)
-            y += row.frame.height
+            let h = row.preferredHeight(for: w)
+            row.frame = NSRect(x: 0, y: y, width: w, height: h)
+            y += h
         }
         if let hl = headerLabel {
             hl.frame = NSRect(x: 16, y: y, width: w - 32, height: 20)

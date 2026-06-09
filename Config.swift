@@ -39,6 +39,8 @@ struct AppConfig {
     var webdavPass: String = ""    // WebDAV 密码/应用专用密码
     var webdavPath: String = "/codelight/config.json"  // 远程配置文件路径
     var webdavAutoSync: Bool = false  // 自动同步开关
+    var skillsRepoURL: String = "anthropics/skills"   // owner/repo 格式
+    var skillsCatalogPath: String = "skills"          // 仓库内 skills 目录路径
 
     static func load() -> AppConfig {
         let ud = UserDefaults.standard
@@ -79,6 +81,8 @@ struct AppConfig {
         if let v = ud.string(forKey: "webdavPass") { c.webdavPass = v }
         if let v = ud.string(forKey: "webdavPath") { c.webdavPath = v }
         if ud.object(forKey: "webdavAutoSync") != nil { c.webdavAutoSync = ud.bool(forKey: "webdavAutoSync") }
+        if let v = ud.string(forKey: "skillsRepoURL") { c.skillsRepoURL = v }
+        if let v = ud.string(forKey: "skillsCatalogPath") { c.skillsCatalogPath = v }
         return c
     }
 
@@ -118,6 +122,8 @@ struct AppConfig {
         ud.set(webdavPass, forKey: "webdavPass")
         ud.set(webdavPath, forKey: "webdavPath")
         ud.set(webdavAutoSync, forKey: "webdavAutoSync")
+        ud.set(skillsRepoURL, forKey: "skillsRepoURL")
+        ud.set(skillsCatalogPath, forKey: "skillsCatalogPath")
     }
 
     /// 导出为 JSON（用于 WebDAV 同步，排除设备相关的位置信息）
@@ -141,6 +147,8 @@ struct AppConfig {
             "permissionMode": permissionMode,
             "pollInterval": pollInterval,
             "webdavAutoSync": webdavAutoSync,
+            "skillsRepoURL": skillsRepoURL,
+            "skillsCatalogPath": skillsCatalogPath,
         ]
     }
 
@@ -164,6 +172,8 @@ struct AppConfig {
         if let v = dict["permissionMode"] as? String { permissionMode = v }
         if let v = dict["pollInterval"] as? Double { pollInterval = v }
         if let v = dict["webdavAutoSync"] as? Bool { webdavAutoSync = v }
+        if let v = dict["skillsRepoURL"] as? String { skillsRepoURL = v }
+        if let v = dict["skillsCatalogPath"] as? String { skillsCatalogPath = v }
         horizontal = (displayMode == "horizontal")
     }
 }

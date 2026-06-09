@@ -64,6 +64,8 @@
 - `LightAnimator.swift` — 灯动画逻辑
 - `WebDAVSync.swift` — WebDAV 配置同步
 - `SettingsUI.swift` — 设置面板组件（SettingsRowView、SettingsGroupView、NSSwitch 开关）
+- `SkillsManager.swift` — 技能管理：本地扫描、GitHub 远程发现、安装/卸载
+- `SkillsTab.swift` — 设置面板「🧩 技能」标签页 UI（SettingsWindowController 扩展）
 - `codelight-cli.swift` — CLI 终端工具（state/sessions/history/watch）
 - `Makefile` — build/package/release 自动化
 
@@ -82,6 +84,7 @@
 - **不带图标**（`SettingsRowView` 不传 `icon` 参数）
 - 控件工厂方法：`makeToggle`、`makeSlider`、`makePopup`、`makeSegmented`
 - 使用 `NSSwitch`（非 `NSButton.switch`）作为开关控件
+- **所有 NSScrollView 必须隐藏滚动条**：`hasVerticalScroller = false`，支持滚动但不显示滚动条
 
 ## Hook 配置
 

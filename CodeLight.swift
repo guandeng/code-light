@@ -805,7 +805,19 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var generalContainer: NSView!
     var appearanceContainer: NSView!
     var behaviorContainer: NSView!
-    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "☁️ 高级", "📊 统计"]
+    var skillsContainer: NSView!
+    // Skills tab UI state
+    var skillsSegment: NSSegmentedControl!
+    var skillsStatusLabel: NSTextField!
+    var skillsListContainer: FlippedView!
+    var skillsRepoConfigView: NSView!
+    var skillsRepoField: NSTextField!
+    var skillsPathField: NSTextField!
+    var skillsListTopY: CGFloat = 0
+    var skillsContainerHeight: CGFloat = 0
+    var skillsRemoteItems: [SkillItem] = []
+    var skillsRemoteContents: [String: String] = [:]
+    let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "☁️ 高级", "📊 统计", "🧩 技能"]
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
@@ -937,13 +949,24 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         advancedDoc.frame.size.height = max(advancedMaxY + 20, mainH)
         let advancedScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         advancedScroll.documentView = advancedDoc
-        advancedScroll.hasVerticalScroller = true
-        advancedScroll.autohidesScrollers = true
+        advancedScroll.hasVerticalScroller = false
         advancedScroll.drawsBackground = false
         advancedContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         advancedContainer.addSubview(advancedScroll)
 
-        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, alwaysAllowContainer!, rulesContainer!, hookContainer!, advancedContainer!, statsContainer!]
+        // 🧩 技能选项卡
+        let skillsDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 900))
+        buildSkillsTab(skillsDoc, c)
+        let skillsMaxY = skillsDoc.subviews.reduce(CGFloat(0)) { max($0, $1.frame.origin.y + $1.frame.height) }
+        skillsDoc.frame.size.height = max(skillsMaxY + 20, mainH)
+        let skillsScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        skillsScroll.documentView = skillsDoc
+        skillsScroll.hasVerticalScroller = false
+        skillsScroll.drawsBackground = false
+        skillsContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        skillsContainer.addSubview(skillsScroll)
+
+        containers = [generalContainer!, appearanceContainer!, behaviorContainer!, alwaysAllowContainer!, rulesContainer!, hookContainer!, advancedContainer!, statsContainer!, skillsContainer!]
         for (i, container) in containers.enumerated() {
             contentArea.addSubview(container)
             container.isHidden = (i != 0)
@@ -2469,8 +2492,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func sidebarButtonClicked(_ sender: NSButton) {
         let row = sender.tag
-        let isStatsTab = (row == sidebarItems.count - 1)
+        let isStatsTab = (row == sidebarItems.count - 2)  // 统计是倒数第2个
         let isAlwaysAllowTab = (row == 3)
+        let isSkillsTab = (row == sidebarItems.count - 1)  // 技能是最后一个
         for (i, c) in containers.enumerated() {
             c.isHidden = (i != row)
         }
@@ -2489,6 +2513,14 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         if isAlwaysAllowTab {
             rebuildAlwaysAllowRulesList()
+        }
+        if isSkillsTab {
+            if skillsSegment.selectedSegment == 0 {
+                rebuildSkillsList()
+            } else {
+                if skillsRemoteItems.isEmpty { skillsRefreshRemote(self) }
+                else { rebuildSkillsDiscoverList() }
+            }
         }
     }
 
