@@ -943,7 +943,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         hookContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         buildHookTab(hookContainer!)
 
-        let statsDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 900))
+        let statsDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         buildStatsTab(statsDoc, c)
         statsContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         statsContainer.wantsLayer = true
