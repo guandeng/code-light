@@ -171,7 +171,11 @@ extension SettingsWindowController {
         skillsContainerHeight = contentW - 32
 
         // 已安装模式：y 就是当前位置（config view 没撑大 y）
-        skillsInstalledListY = y
+        // 列表紧跟分段卡片，状态标签也不占间距
+        skillsInstalledListY = segGroup.frame.origin.y + segGroup.frame.height + 4
+        skillsStatusLabel.frame.origin.y = skillsInstalledListY
+        skillsListContainer.frame.origin.y = skillsInstalledListY + 18
+        skillsListTopY = skillsInstalledListY + 18
 
         // 初始加载已安装列表
         rebuildSkillsList()
@@ -191,12 +195,9 @@ extension SettingsWindowController {
             skillsListTopY = skillsDiscoverListY + 16
 
             skillsListContainer?.subviews.forEach { $0.removeFromSuperview() }
+            skillsStatusLabel.stringValue = ""  // 清掉已安装模式的文字
             updateInstallSourceView()
-            if skillsRemoteItems.isEmpty {
-                skillsRefreshRemote(sender)
-            } else {
-                rebuildSkillsDiscoverList()
-            }
+            rebuildSkillsDiscoverList()
         } else {
             // 已安装模式：隐藏 config view，列表回到紧凑位置
             skillsRepoConfigView.isHidden = true
@@ -217,9 +218,7 @@ extension SettingsWindowController {
     @objc func installSourceChanged(_ sender: NSSegmentedControl) {
         updateInstallSourceView()
         // 切换到市场时自动加载
-        if sender.selectedSegment == 0 && skillsRemoteItems.isEmpty {
-            skillsRefreshRemote(sender)
-        }
+        // 不自动请求，避免 GitHub API 限流报错
     }
 
     private func updateInstallSourceView() {
