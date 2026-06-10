@@ -194,6 +194,8 @@ extension SettingsWindowController {
         skillsListTopY = listY + 16
 
         if isDiscover {
+            // 先清空旧列表，避免已安装内容残留在「发现」模式
+            skillsListContainer?.subviews.forEach { $0.removeFromSuperview() }
             updateInstallSourceView()
             if skillsRemoteItems.isEmpty {
                 skillsRefreshRemote(sender)
@@ -217,10 +219,30 @@ extension SettingsWindowController {
 
     private func updateInstallSourceView() {
         let idx = installSourceSegment?.selectedSegment ?? 0
+        let sourceY: CGFloat = 34  // 紧跟在来源分段控件下方
+
+        // 隐藏所有容器，将可见的移到紧邻分段控件下方
         skillsMarketContainer?.isHidden = (idx != 0)
         skillsGitContainer?.isHidden = (idx != 1)
         skillsDirContainer?.isHidden = (idx != 2)
         skillsZipContainer?.isHidden = (idx != 3)
+
+        // 动态定位：选中的容器紧跟分段控件
+        skillsMarketContainer?.frame.origin.y = sourceY
+        skillsGitContainer?.frame.origin.y = sourceY
+        skillsDirContainer?.frame.origin.y = sourceY
+        skillsZipContainer?.frame.origin.y = sourceY
+
+        // 动态调整配置区总高度
+        let containerH: CGFloat
+        switch idx {
+        case 0: containerH = (skillsMarketContainer?.frame.height ?? 0)
+        case 1: containerH = (skillsGitContainer?.frame.height ?? 0)
+        case 2: containerH = (skillsDirContainer?.frame.height ?? 0)
+        case 3: containerH = (skillsZipContainer?.frame.height ?? 0)
+        default: containerH = 0
+        }
+        skillsRepoConfigView?.frame.size.height = sourceY + containerH
         // 非"发现"的市场模式时清空列表
         if idx != 0 {
             guard let lc = skillsListContainer else { return }
@@ -349,8 +371,51 @@ extension SettingsWindowController {
     @objc func skillsTagClicked(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue, id.hasPrefix("tag:") else { return }
         let tag = String(id.dropFirst(4))
-        // 切换选中：再次点击取消选中
         skillsSelectedTag = (skillsSelectedTag == tag) ? nil : tag
+        rebuildSkillsList()
+    }
+
+    // MARK: - Batch Operations
+
+    @objc func skillsToggleSelect(_ sender: NSButton) {
+        let idx = sender.tag
+        if sender.state == .on {
+            skillsSelectedIndices.insert(idx)
+        } else {
+            skillsSelectedIndices.remove(idx)
+        }
+        // 不完全重建，只刷新批量操作栏
+        rebuildSkillsList()
+    }
+
+    @objc func skillsBatchUninstall(_ sender: NSButton) {
+        let allItems = SkillsManager.shared.scanAll()
+        let filterIdx = installedFilterSegment?.selectedSegment ?? 0
+        let displayItems: [SkillItem]
+        switch filterIdx {
+        case 1: displayItems = allItems.filter { $0.type == .skill }
+        case 2: displayItems = allItems.filter { $0.type == .command }
+        default: displayItems = allItems
+        }
+
+        var success = 0
+        var failed = 0
+        for idx in skillsSelectedIndices.sorted().reversed() {
+            guard idx < displayItems.count else { continue }
+            if SkillsManager.shared.uninstall(displayItems[idx]) {
+                success += 1
+            } else {
+                failed += 1
+            }
+        }
+        skillsSelectedIndices.removeAll()
+        skillsStatusLabel.stringValue = "✅ 批量卸载完成：成功 \(success) 个\(failed > 0 ? "，失败 \(failed) 个" : "")"
+        skillsStatusLabel.textColor = failed > 0 ? NSColor.systemOrange : NSColor.systemGreen
+        rebuildSkillsList()
+    }
+
+    @objc func skillsClearSelection(_ sender: NSButton) {
+        skillsSelectedIndices.removeAll()
         rebuildSkillsList()
     }
 
@@ -435,9 +500,44 @@ extension SettingsWindowController {
             y += 28
         }
 
-        // 按标签筛选
+        // 按标签��选
         if let selectedTag = skillsSelectedTag, !selectedTag.isEmpty {
             displayItems = displayItems.filter { $0.tags.contains(selectedTag) }
+        }
+
+        // 批量操作栏（有选中项时显示）
+        if !skillsSelectedIndices.isEmpty {
+            let bar = NSView(frame: NSRect(x: 0, y: y, width: listW, height: 32))
+            bar.wantsLayer = true
+            bar.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+            bar.layer?.cornerRadius = 6
+
+            let countLabel = NSTextField(frame: NSRect(x: 12, y: 4, width: 120, height: 24))
+            countLabel.isEditable = false; countLabel.isBordered = false; countLabel.backgroundColor = .clear
+            countLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+            countLabel.textColor = NSColor.labelColor
+            countLabel.stringValue = "已选 \(skillsSelectedIndices.count) 项"
+            bar.addSubview(countLabel)
+
+            let batchDeleteBtn = NSButton(frame: NSRect(x: listW - 200, y: 4, width: 80, height: 24))
+            batchDeleteBtn.title = "批量卸载"
+            batchDeleteBtn.bezelStyle = .rounded
+            batchDeleteBtn.font = NSFont.systemFont(ofSize: 11)
+            batchDeleteBtn.contentTintColor = NSColor.systemRed
+            batchDeleteBtn.target = self
+            batchDeleteBtn.action = #selector(skillsBatchUninstall(_:))
+            bar.addSubview(batchDeleteBtn)
+
+            let clearBtn = NSButton(frame: NSRect(x: listW - 110, y: 4, width: 80, height: 24))
+            clearBtn.title = "取消选择"
+            clearBtn.bezelStyle = .rounded
+            clearBtn.font = NSFont.systemFont(ofSize: 11)
+            clearBtn.target = self
+            clearBtn.action = #selector(skillsClearSelection(_:))
+            bar.addSubview(clearBtn)
+
+            listContainer.addSubview(bar)
+            y += 40
         }
 
         // 按 sourceGroup 分组显示
@@ -466,10 +566,23 @@ extension SettingsWindowController {
             var globalIdx = 0
             for group in grouped {
                 let rows = group.items.enumerated().map { (idx, item) -> SettingsRowView in
+                    let itemIdx = globalIdx + idx
                     let btn = NSButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
                     btn.bezelStyle = .rounded
                     btn.font = NSFont.systemFont(ofSize: 11)
-                    btn.tag = globalIdx + idx
+                    btn.tag = itemIdx
+
+                    // checkbox 选中状态
+                    let checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(skillsToggleSelect(_:)))
+                    checkbox.setButtonType(.switch)
+                    checkbox.state = skillsSelectedIndices.contains(itemIdx) ? .on : .off
+                    checkbox.tag = itemIdx
+                    // 将 checkbox 和卸载按钮放在 accessory 容器中
+                    let accView = NSView(frame: NSRect(x: 0, y: 0, width: 140, height: 24))
+                    checkbox.frame = NSRect(x: 0, y: 0, width: 20, height: 24)
+                    btn.frame = NSRect(x: 24, y: 0, width: 60, height: 24)
+                    accView.addSubview(checkbox)
+                    accView.addSubview(btn)
 
                     // Agent 徽章 + 来源
                     let agents = SkillsManager.shared.detectAgents(for: item)
@@ -486,15 +599,14 @@ extension SettingsWindowController {
                     let row = SettingsRowView(
                         title: displayName,
                         subtitle: subtitle.isEmpty ? nil : subtitle,
-                        accessory: btn,
+                        accessory: accView,
                         isFirst: idx == 0,
                         isLast: idx == group.items.count - 1
                     )
                     // 点击行预览 SKILL.md
                     let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(skillsPreviewClicked(_:)))
                     row.addGestureRecognizer(clickGesture)
-                    // 存储全局索引到 row 的 identifier
-                    row.identifier = NSUserInterfaceItemIdentifier("skill-\(globalIdx + idx)")
+                    row.identifier = NSUserInterfaceItemIdentifier("skill-\(itemIdx)")
                     return row
                 }
 
