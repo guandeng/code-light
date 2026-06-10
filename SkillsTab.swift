@@ -193,6 +193,11 @@ extension SettingsWindowController {
         skillsListContainer.frame.origin.y = listY + 16
         skillsListTopY = listY + 16
 
+        // 重置 docView 高度，避免残留高度
+        if let docView = skillsListContainer?.superview {
+            docView.frame.size.height = listY + 16 + 200
+        }
+
         if isDiscover {
             // 先清空旧列表，避免已安装内容残留在「发现」模式
             skillsListContainer?.subviews.forEach { $0.removeFromSuperview() }
@@ -1012,7 +1017,7 @@ extension SettingsWindowController {
         // 更新父级 FlippedView 的 frame，使滚动正确
         if let docView = skillsListContainer?.superview {
             let totalH = skillsListTopY + maxY + 20
-            docView.frame.size.height = max(totalH, docView.frame.height)
+            docView.frame.size.height = totalH
         }
     }
 
