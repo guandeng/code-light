@@ -25,6 +25,7 @@ struct SkillItem {
     var isInstalled: Bool = false
     var sourceURL: String?       // 来源地址（GitHub repo / plugin homepage）
     var sourceGroup: String?     // 分组名（如插件名 "pua"、或 "本地命令"、"本地技能"）
+    var tags: [String] = []      // 标签（从 frontmatter tags 字段读取）
 }
 
 // MARK: - SkillsManager (local scanning + install/uninstall)
@@ -54,28 +55,28 @@ class SkillsManager {
                 let skillFile = (fullPath as NSString).appendingPathComponent("SKILL.md")
                 if fm.fileExists(atPath: skillFile),
                    let content = try? String(contentsOfFile: skillFile, encoding: .utf8) {
-                    let meta = parseFrontmatter(from: content)
+                    let meta = parseFrontmatterFull(from: content)
                     items.append(SkillItem(
                         name: meta.name.isEmpty ? entry : meta.name,
                         description: meta.description,
                         type: .skill, source: .local,
                         localPath: skillFile, downloadURL: nil,
                         repoOwner: nil, repoName: nil, remotePath: nil,
-                        sourceGroup: "本地技能"
+                        sourceGroup: "本地技能", tags: meta.tags
                     ))
                 }
             } else if entry.hasSuffix(".md") {
                 // 平铺模式: name.md
                 let name = (entry as NSString).deletingPathExtension
                 guard let content = try? String(contentsOfFile: fullPath, encoding: .utf8) else { continue }
-                let meta = parseFrontmatter(from: content)
+                let meta = parseFrontmatterFull(from: content)
                 items.append(SkillItem(
                     name: meta.name.isEmpty ? name : meta.name,
                     description: meta.description,
                     type: .skill, source: .local,
                     localPath: fullPath, downloadURL: nil,
                     repoOwner: nil, repoName: nil, remotePath: nil,
-                    sourceGroup: "本地技能"
+                    sourceGroup: "本地技能", tags: meta.tags
                 ))
             }
         }
@@ -91,14 +92,14 @@ class SkillsManager {
             let name = (entry as NSString).deletingPathExtension
             let fullPath = (cmdPath as NSString).appendingPathComponent(entry)
             guard let content = try? String(contentsOfFile: fullPath, encoding: .utf8) else { continue }
-            let meta = parseFrontmatter(from: content)
+            let meta = parseFrontmatterFull(from: content)
             items.append(SkillItem(
                 name: meta.name.isEmpty ? name : meta.name,
                 description: meta.description,
                 type: .command, source: .local,
                 localPath: fullPath, downloadURL: nil,
                 repoOwner: nil, repoName: nil, remotePath: nil,
-                sourceGroup: "本地命令"
+                sourceGroup: "本地命令", tags: meta.tags
             ))
         }
         return items
@@ -136,14 +137,14 @@ class SkillsManager {
                     let cmdName = (file as NSString).deletingPathExtension
                     let fullPath = (commandsPath as NSString).appendingPathComponent(file)
                     guard let content = try? String(contentsOfFile: fullPath, encoding: .utf8) else { continue }
-                    let meta = parseFrontmatter(from: content)
+                    let meta = parseFrontmatterFull(from: content)
                     items.append(SkillItem(
                         name: "\(namespace):\(cmdName)",
                         description: meta.description,
                         type: .command, source: .local,
                         localPath: fullPath, downloadURL: nil,
                         repoOwner: nil, repoName: nil, remotePath: nil,
-                        sourceURL: homepage, sourceGroup: group
+                        sourceURL: homepage, sourceGroup: group, tags: meta.tags
                     ))
                 }
             }
@@ -160,14 +161,14 @@ class SkillsManager {
                     let skillFile = (skillDirPath as NSString).appendingPathComponent("SKILL.md")
                     if fm.fileExists(atPath: skillFile),
                        let content = try? String(contentsOfFile: skillFile, encoding: .utf8) {
-                        let meta = parseFrontmatter(from: content)
+                        let meta = parseFrontmatterFull(from: content)
                         items.append(SkillItem(
                             name: "\(namespace):\(meta.name.isEmpty ? skillEntry : meta.name)",
                             description: meta.description,
                             type: .skill, source: .local,
                             localPath: skillFile, downloadURL: nil,
                             repoOwner: nil, repoName: nil, remotePath: nil,
-                            sourceURL: homepage, sourceGroup: group
+                            sourceURL: homepage, sourceGroup: group, tags: meta.tags
                         ))
                     }
                 }
@@ -227,6 +228,89 @@ class SkillsManager {
     }
 
     // MARK: Frontmatter Parsing
+
+    func parseFrontmatterFull(from markdown: String) -> (name: String, description: String, tags: [String]) {
+        let lines = markdown.components(separatedBy: "\n")
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else {
+            let basic = extractFromContent(markdown)
+            return (basic.name, basic.description, [])
+        }
+
+        var endIdx = -1
+        for i in 1..<lines.count {
+            if lines[i].trimmingCharacters(in: .whitespaces) == "---" {
+                endIdx = i
+                break
+            }
+        }
+        if endIdx < 0 {
+            let basic = extractFromContent(markdown)
+            return (basic.name, basic.description, [])
+        }
+
+        var name = ""
+        var description = ""
+        var tags: [String] = []
+
+        for i in 1..<endIdx {
+            let line = lines[i]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("name:") {
+                name = trimmed.replacingOccurrences(of: "^name:\\s*", with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: "^\"|\"$", with: "", options: .regularExpression)
+            } else if trimmed.hasPrefix("description:") {
+                let desc = trimmed.replacingOccurrences(of: "^description:\\s*", with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespaces)
+                if desc.hasPrefix("|-") || desc.hasPrefix("|") || desc.isEmpty {
+                    var multiLines: [String] = []
+                    for j in i+1..<endIdx {
+                        let sub = lines[j]
+                        if sub.hasPrefix("  ") || sub.hasPrefix("\t") {
+                            multiLines.append(sub.trimmingCharacters(in: .whitespaces))
+                        } else { break }
+                    }
+                    description = multiLines.joined(separator: " ")
+                } else {
+                    description = desc.replacingOccurrences(of: "^\"|\"$", with: "", options: .regularExpression)
+                }
+            } else if trimmed.hasPrefix("tags:") {
+                let rest = trimmed.replacingOccurrences(of: "^tags:\\s*", with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespaces)
+                if rest.hasPrefix("[") {
+                    // YAML 列表格式: [tag1, tag2]
+                    let inner = rest.replacingOccurrences(of: "^\\[|\\]$", with: "", options: .regularExpression)
+                    tags = inner.components(separatedBy: ",")
+                        .map { $0.trimmingCharacters(in: .whitespaces)
+                                .replacingOccurrences(of: "^\"|\"$", with: "", options: .regularExpression) }
+                        .filter { !$0.isEmpty }
+                } else if rest.isEmpty || rest == "|" || rest == "|-" {
+                    // 多行列表: tags:\n  - tag1\n  - tag2
+                    for j in i+1..<endIdx {
+                        let sub = lines[j].trimmingCharacters(in: .whitespaces)
+                        if sub.hasPrefix("- ") {
+                            tags.append(String(sub.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+                                .replacingOccurrences(of: "^\"|\"$", with: "", options: .regularExpression))
+                        } else { break }
+                    }
+                }
+            }
+        }
+
+        if description.isEmpty {
+            let contentStart = endIdx + 1
+            if contentStart < lines.count {
+                let contentLines = lines[contentStart...].filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                if let first = contentLines.first {
+                    description = first
+                        .replacingOccurrences(of: "^#+\\s*", with: "", options: .regularExpression)
+                        .trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+
+        return (name, String(description.prefix(120)), tags)
+    }
 
     func parseFrontmatter(from markdown: String) -> (name: String, description: String) {
         let lines = markdown.components(separatedBy: "\n")

@@ -22,7 +22,7 @@ extension SettingsWindowController {
         segGroup.frame.origin = NSPoint(x: 16, y: y)
         segGroup.autoresizingMask = .width
         container.addSubview(segGroup)
-        y += segGroup.frame.height + 8
+        y += segGroup.frame.height + 4
 
         // --- 安装来源配置区（仅"发现"模式可见）---
         skillsRepoConfigView = NSView(frame: NSRect(x: 16, y: y, width: contentW - 32, height: 0))
@@ -169,13 +169,13 @@ extension SettingsWindowController {
 
         // 记录「已安装」和「发现」模式下列表的不同起始 Y
         // 已安装模式：列表紧跟在分段控件之后
-        skillsInstalledListY = segGroup.frame.origin.y + segGroup.frame.height + 8
+        skillsInstalledListY = segGroup.frame.origin.y + segGroup.frame.height + 4
         skillsDiscoverListY = y
 
         // 初始加载已安装列表（手动定位到紧凑位置）
         skillsStatusLabel.frame.origin.y = skillsInstalledListY
-        skillsListContainer.frame.origin.y = skillsInstalledListY + 24
-        skillsListTopY = skillsInstalledListY + 24
+        skillsListContainer.frame.origin.y = skillsInstalledListY + 16
+        skillsListTopY = skillsInstalledListY + 16
 
         // 初始加载已安装列表
         rebuildSkillsList()
@@ -190,8 +190,8 @@ extension SettingsWindowController {
         // 动态调整列表位置：已安装模式紧凑，发现模式留出配置区空间
         let listY = isDiscover ? skillsDiscoverListY : skillsInstalledListY
         skillsStatusLabel.frame.origin.y = listY
-        skillsListContainer.frame.origin.y = listY + 24
-        skillsListTopY = listY + 24
+        skillsListContainer.frame.origin.y = listY + 16
+        skillsListTopY = listY + 16
 
         if isDiscover {
             updateInstallSourceView()
@@ -342,6 +342,15 @@ extension SettingsWindowController {
     // MARK: - Rebuild Installed List
 
     @objc func installedFilterChanged(_ sender: NSSegmentedControl) {
+        skillsSelectedTag = nil
+        rebuildSkillsList()
+    }
+
+    @objc func skillsTagClicked(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue, id.hasPrefix("tag:") else { return }
+        let tag = String(id.dropFirst(4))
+        // 切换选中：再次点击取消选中
+        skillsSelectedTag = (skillsSelectedTag == tag) ? nil : tag
         rebuildSkillsList()
     }
 
@@ -385,7 +394,7 @@ extension SettingsWindowController {
         filterGroup.frame.origin = NSPoint(x: 0, y: y)
         filterGroup.autoresizingMask = .width
         listContainer.addSubview(filterGroup)
-        y += filterGroup.frame.height + 8
+        y += filterGroup.frame.height + 4
 
         let filterIdx = installedFilterSegment.selectedSegment
         var displayItems: [SkillItem]
@@ -393,6 +402,42 @@ extension SettingsWindowController {
         case 1: displayItems = skills
         case 2: displayItems = commands
         default: displayItems = allItems
+        }
+
+        // 标签 chip 行：聚合所有 tags
+        let allTags = Set(displayItems.flatMap { $0.tags }).sorted()
+        if !allTags.isEmpty {
+            var chipX: CGFloat = 0
+            for tag in allTags {
+                let chip = NSButton(frame: NSRect(x: chipX, y: y, width: 0, height: 22))
+                chip.title = " \(tag) "
+                chip.bezelStyle = .recessed
+                chip.font = NSFont.systemFont(ofSize: 10)
+                chip.isBordered = true
+                chip.sizeToFit()
+                chip.frame.size.width += 12
+                chip.frame.size.height = 22
+                // 高亮当��选中标签
+                if skillsSelectedTag == tag {
+                    chip.contentTintColor = NSColor.controlAccentColor
+                }
+                chip.identifier = NSUserInterfaceItemIdentifier("tag:\(tag)")
+                chip.target = self
+                chip.action = #selector(skillsTagClicked(_:))
+                listContainer.addSubview(chip)
+                chipX += chip.frame.width + 4
+                if chipX > listW - 32 {
+                    // 换行
+                    y += 26
+                    chipX = 0
+                }
+            }
+            y += 28
+        }
+
+        // 按标签筛选
+        if let selectedTag = skillsSelectedTag, !selectedTag.isEmpty {
+            displayItems = displayItems.filter { $0.tags.contains(selectedTag) }
         }
 
         // 按 sourceGroup 分组显示
@@ -438,13 +483,19 @@ extension SettingsWindowController {
                     }
 
                     let displayName = item.type == .command ? "/\(item.name)" : item.name
-                    return SettingsRowView(
+                    let row = SettingsRowView(
                         title: displayName,
                         subtitle: subtitle.isEmpty ? nil : subtitle,
                         accessory: btn,
                         isFirst: idx == 0,
                         isLast: idx == group.items.count - 1
                     )
+                    // 点击行预览 SKILL.md
+                    let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(skillsPreviewClicked(_:)))
+                    row.addGestureRecognizer(clickGesture)
+                    // 存储全局索引到 row 的 identifier
+                    row.identifier = NSUserInterfaceItemIdentifier("skill-\(globalIdx + idx)")
+                    return row
                 }
 
                 // 组标题：名称 (数量) + 来源链接
@@ -456,7 +507,7 @@ extension SettingsWindowController {
                 groupView.frame.origin = NSPoint(x: 0, y: y)
                 groupView.autoresizingMask = .width
                 listContainer.addSubview(groupView)
-                y += groupView.frame.height + 8
+                y += groupView.frame.height + 4
                 globalIdx += group.items.count
             }
         }
@@ -701,5 +752,67 @@ extension SettingsWindowController {
             let totalH = skillsListTopY + maxY + 20
             docView.frame.size.height = max(totalH, docView.frame.height)
         }
+    }
+
+    // MARK: - Skill Preview
+
+    @objc func skillsPreviewClicked(_ sender: NSClickGestureRecognizer) {
+        guard let row = sender.view as? SettingsRowView,
+              let identifier = row.identifier?.rawValue,
+              identifier.hasPrefix("skill-"),
+              let idx = Int(identifier.replacingOccurrences(of: "skill-", with: "")) else { return }
+        let allItems = SkillsManager.shared.scanAll()
+        let filterIdx = installedFilterSegment?.selectedSegment ?? 0
+        let displayItems: [SkillItem]
+        switch filterIdx {
+        case 1: displayItems = allItems.filter { $0.type == .skill }
+        case 2: displayItems = allItems.filter { $0.type == .command }
+        default: displayItems = allItems
+        }
+        guard idx < displayItems.count else { return }
+        let item = displayItems[idx]
+        showSkillPreview(item)
+    }
+
+    private func showSkillPreview(_ item: SkillItem) {
+        guard let path = item.localPath,
+              let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+            skillsStatusLabel.stringValue = "无法读取技能文件"
+            skillsStatusLabel.textColor = NSColor.systemRed
+            return
+        }
+
+        // 关闭已有预览窗口
+        skillsPreviewWindow?.close()
+
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
+                            styleMask: [.titled, .closable, .resizable],
+                            backing: .buffered, defer: false)
+        panel.title = "预览: \(item.name)"
+        panel.isReleasedWhenClosed = false
+
+        let scrollView = NSScrollView(frame: panel.contentView!.bounds)
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 580, height: 500))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.textColor = NSColor.labelColor
+        textView.backgroundColor = NSColor.textBackgroundColor
+        textView.isRichText = false
+        textView.string = content
+        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.sizeToFit()
+
+        scrollView.documentView = textView
+        panel.contentView?.addSubview(scrollView)
+
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        skillsPreviewWindow = panel
     }
 }

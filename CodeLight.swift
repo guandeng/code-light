@@ -827,6 +827,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var skillsDirContainer: NSView!
     var skillsZipContainer: NSView!
     var skillsGitField: NSTextField!
+    var skillsPreviewWindow: NSWindow?
+    var skillsSelectedTag: String?
     let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "☁️ 高级", "📊 统计", "🧩 技能"]
 
     init(appDelegate: AppDelegate) {
