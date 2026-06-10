@@ -591,6 +591,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        if config.s3AutoSync && !config.s3Bucket.isEmpty && !config.s3AccessKeyID.isEmpty {
+            S3Sync.shared.uploadConfig(config) { success, msg in
+                DispatchQueue.main.async {
+                    self.log("[S3] 自动同步: \(msg)")
+                }
+            }
+        }
     }
 
     /// 从磁盘重新加载配置并重建窗口（保存后调用）
@@ -760,6 +767,19 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var webdavPathField: NSTextField!
     var webdavAutoSyncCheck: NSSwitch!
     var webdavStatusLabel: NSTextField!
+    // S3 UI
+    var syncTypeSegment: NSSegmentedControl!
+    var s3ProviderPopup: NSPopUpButton!
+    var s3EndpointField: NSTextField!
+    var s3RegionField: NSTextField!
+    var s3BucketField: NSTextField!
+    var s3AccessKeyIDField: NSTextField!
+    var s3SecretAccessKeyField: NSSecureTextField!
+    var s3RemotePathField: NSTextField!
+    var s3AutoSyncCheck: NSSwitch!
+    var s3StatusLabel: NSTextField!
+    var s3ContainerView: FlippedView!
+    var webdavContainerView: FlippedView!
     var logTextView: NSTextView!
 
     var statsContainer: NSView!
@@ -1944,18 +1964,46 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         var y: CGFloat = 16
         let contentW = view.bounds.width - 32
 
-        // WebDAV 内容直接平铺
-        let webdavContent = FlippedView(frame: NSRect(x: 16, y: y, width: contentW, height: 400))
-        buildWebDAVContent(webdavContent, c, width: contentW)
-        // 计算实际内容高度
-        var maxY: CGFloat = 0
-        for sub in webdavContent.subviews {
-            let bottom = sub.frame.origin.y + sub.frame.height
-            if bottom > maxY { maxY = bottom }
+        // --- 同步方式切换 ---
+        let showS3 = c.s3AutoSync || (!c.webdavAutoSync && !c.s3Bucket.isEmpty)
+        syncTypeSegment = SettingsRowView.makeSegmented(labels: ["WebDAV", "S3"], selected: showS3 ? 1 : 0) { [weak self] idx in
+            guard let self = self else { return }
+            self.webdavContainerView.isHidden = (idx != 0)
+            self.s3ContainerView.isHidden = (idx != 1)
         }
-        webdavContent.frame.size.height = maxY + 16
-        view.addSubview(webdavContent)
-        y += webdavContent.frame.height + 16
+        let switcherRow = SettingsRowView(title: "同步方式", accessory: syncTypeSegment, isFirst: true, isLast: true)
+        let switcherGroup = SettingsGroupView(header: "云同步", rows: [switcherRow])
+        switcherGroup.frame.origin = NSPoint(x: 16, y: y)
+        switcherGroup.autoresizingMask = .width
+        view.addSubview(switcherGroup)
+        y += switcherGroup.frame.height + 8
+
+        // --- WebDAV 容器 ---
+        webdavContainerView = FlippedView(frame: NSRect(x: 16, y: y, width: contentW, height: 400))
+        buildWebDAVContent(webdavContainerView, c, width: contentW)
+        var webdavMaxY: CGFloat = 0
+        for sub in webdavContainerView.subviews {
+            let bottom = sub.frame.origin.y + sub.frame.height
+            if bottom > webdavMaxY { webdavMaxY = bottom }
+        }
+        webdavContainerView.frame.size.height = webdavMaxY + 16
+        view.addSubview(webdavContainerView)
+
+        // --- S3 容器 ---
+        s3ContainerView = FlippedView(frame: NSRect(x: 16, y: y, width: contentW, height: 500))
+        buildS3Content(s3ContainerView, c, width: contentW)
+        var s3MaxY: CGFloat = 0
+        for sub in s3ContainerView.subviews {
+            let bottom = sub.frame.origin.y + sub.frame.height
+            if bottom > s3MaxY { s3MaxY = bottom }
+        }
+        s3ContainerView.frame.size.height = s3MaxY + 16
+        view.addSubview(s3ContainerView)
+
+        // 显示/隐藏
+        webdavContainerView.isHidden = showS3
+        s3ContainerView.isHidden = !showS3
+        y += max(webdavContainerView.frame.height, s3ContainerView.frame.height) + 16
 
         // 运行日志
         let logContent = FlippedView(frame: NSRect(x: 16, y: y, width: contentW, height: 220))
@@ -2024,6 +2072,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let autoSyncToggle = SettingsRowView.makeToggle(isOn: c.webdavAutoSync) { [weak self] isOn in
             guard let self = self else { return }
             self.appDelegate.config.webdavAutoSync = isOn
+            if isOn {
+                self.appDelegate.config.s3AutoSync = false
+                self.s3AutoSyncCheck?.state = .off
+            }
             self.appDelegate.saveConfig()
         }
         webdavAutoSyncCheck = autoSyncToggle
@@ -2223,6 +2275,263 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         c.webdavPass = webdavPassField.stringValue
         c.webdavPath = webdavPathField.stringValue.trimmingCharacters(in: .whitespaces)
         if c.webdavPath.isEmpty { c.webdavPath = "/codelight/config.json" }
+        return c
+    }
+
+    // MARK: - S3 Sync UI
+
+    private func buildS3Content(_ view: NSView, _ c: AppConfig, width: CGFloat) {
+        let contentW = width
+        var y: CGFloat = 0
+
+        // Description
+        let desc = NSTextField(frame: NSRect(x: 10, y: y, width: contentW - 20, height: 16))
+        desc.isEditable = false; desc.isBordered = false; desc.backgroundColor = .clear; desc.drawsBackground = false
+        desc.font = NSFont.systemFont(ofSize: 11)
+        desc.textColor = NSColor.tertiaryLabelColor
+        desc.stringValue = "通过 S3 兼容存储同步配置（AWS、MinIO、Cloudflare R2 等）"
+        view.addSubview(desc)
+        y += 24
+
+        // --- Group: 服务商 ---
+        let presetNames = S3Sync.presets.map { $0.name }
+        s3ProviderPopup = SettingsRowView.makePopup(items: presetNames, selectedIndex: c.s3ProviderPreset) { [weak self] idx in
+            guard let self = self else { return }
+            self.appDelegate.config.s3ProviderPreset = idx
+            let preset = S3Sync.presets[idx]
+            // 自动填充 endpoint / region
+            if let ef = self.s3EndpointField { ef.stringValue = preset.endpoint }
+            if let rf = self.s3RegionField { rf.stringValue = preset.region }
+            self.appDelegate.saveConfig()
+        }
+
+        let endpointField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        endpointField.font = NSFont.systemFont(ofSize: 12)
+        endpointField.placeholderString = "s3.amazonaws.com 或自定义"
+        endpointField.stringValue = c.s3Endpoint
+        endpointField.lineBreakMode = .byTruncatingMiddle
+        s3EndpointField = endpointField
+        endpointField.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.appDelegate.config.s3Endpoint = self.s3EndpointField.stringValue.trimmingCharacters(in: .whitespaces)
+            self.appDelegate.saveConfig()
+        }
+
+        let regionField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        regionField.font = NSFont.systemFont(ofSize: 12)
+        regionField.placeholderString = "us-east-1"
+        regionField.stringValue = c.s3Region
+        s3RegionField = regionField
+        regionField.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.appDelegate.config.s3Region = self.s3RegionField.stringValue.trimmingCharacters(in: .whitespaces)
+            self.appDelegate.saveConfig()
+        }
+
+        let providerGroup = SettingsGroupView(header: "服务商", rows: [
+            SettingsRowView(title: "预设", accessory: s3ProviderPopup, isFirst: true),
+            SettingsRowView(title: "Endpoint", subtitle: "留空则使用预设默认值", accessory: endpointField),
+            SettingsRowView(title: "Region", accessory: regionField, isLast: true),
+        ])
+        providerGroup.frame.origin = NSPoint(x: 0, y: y)
+        providerGroup.autoresizingMask = .width
+        view.addSubview(providerGroup)
+        y += providerGroup.frame.height + 8
+
+        // --- Group: 认证 ---
+        let bucketField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        bucketField.font = NSFont.systemFont(ofSize: 12)
+        bucketField.placeholderString = "my-bucket"
+        bucketField.stringValue = c.s3Bucket
+        s3BucketField = bucketField
+        bucketField.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.appDelegate.config.s3Bucket = self.s3BucketField.stringValue.trimmingCharacters(in: .whitespaces)
+            self.appDelegate.saveConfig()
+        }
+
+        let akField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        akField.font = NSFont.systemFont(ofSize: 12)
+        akField.placeholderString = "Access Key ID"
+        akField.stringValue = c.s3AccessKeyID
+        s3AccessKeyIDField = akField
+        akField.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.appDelegate.config.s3AccessKeyID = self.s3AccessKeyIDField.stringValue
+            self.appDelegate.saveConfig()
+        }
+
+        let skField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        skField.font = NSFont.systemFont(ofSize: 12)
+        skField.placeholderString = "Secret Access Key"
+        skField.stringValue = c.s3SecretAccessKey
+        s3SecretAccessKeyField = skField
+        skField.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.appDelegate.config.s3SecretAccessKey = self.s3SecretAccessKeyField.stringValue
+            self.appDelegate.saveConfig()
+        }
+
+        let remotePathField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        remotePathField.font = NSFont.systemFont(ofSize: 12)
+        remotePathField.placeholderString = "/codelight/config.json"
+        remotePathField.stringValue = c.s3RemotePath
+        remotePathField.lineBreakMode = .byTruncatingMiddle
+        s3RemotePathField = remotePathField
+        remotePathField.onAction = { [weak self] in
+            guard let self = self else { return }
+            self.appDelegate.config.s3RemotePath = self.s3RemotePathField.stringValue.trimmingCharacters(in: .whitespaces)
+            self.appDelegate.saveConfig()
+        }
+
+        let authGroup = SettingsGroupView(header: "认证", rows: [
+            SettingsRowView(title: "Bucket", accessory: bucketField, isFirst: true),
+            SettingsRowView(title: "Access Key ID", accessory: akField),
+            SettingsRowView(title: "Secret Access Key", accessory: skField),
+            SettingsRowView(title: "远程路径", accessory: remotePathField, isLast: true),
+        ])
+        authGroup.frame.origin = NSPoint(x: 0, y: y)
+        authGroup.autoresizingMask = .width
+        view.addSubview(authGroup)
+        y += authGroup.frame.height + 8
+
+        // --- Group: 同步 ---
+        let s3AutoSyncToggle = SettingsRowView.makeToggle(isOn: c.s3AutoSync) { [weak self] isOn in
+            guard let self = self else { return }
+            self.appDelegate.config.s3AutoSync = isOn
+            if isOn {
+                self.appDelegate.config.webdavAutoSync = false
+                self.webdavAutoSyncCheck?.state = .off
+            }
+            self.appDelegate.saveConfig()
+        }
+        s3AutoSyncCheck = s3AutoSyncToggle
+
+        // Buttons row
+        let btnW: CGFloat = 80, btnGap: CGFloat = 8
+        let testBtn = NSButton(frame: NSRect(x: 0, y: 0, width: btnW, height: 26))
+        testBtn.title = "测试连接"; testBtn.bezelStyle = .rounded
+        testBtn.font = NSFont.systemFont(ofSize: 11)
+        testBtn.target = self; testBtn.action = #selector(s3TestConnection(_:))
+
+        let uploadBtn = NSButton(frame: NSRect(x: btnW + btnGap, y: 0, width: btnW, height: 26))
+        uploadBtn.title = "上传配置"; uploadBtn.bezelStyle = .rounded
+        uploadBtn.font = NSFont.systemFont(ofSize: 11)
+        uploadBtn.target = self; uploadBtn.action = #selector(s3Upload(_:))
+
+        let downloadBtn = NSButton(frame: NSRect(x: (btnW + btnGap) * 2, y: 0, width: btnW, height: 26))
+        downloadBtn.title = "下载配置"; downloadBtn.bezelStyle = .rounded
+        downloadBtn.font = NSFont.systemFont(ofSize: 11)
+        downloadBtn.target = self; downloadBtn.action = #selector(s3Download(_:))
+
+        let buttonsView = NSView(frame: NSRect(x: 0, y: 0, width: (btnW + btnGap) * 3, height: 26))
+        buttonsView.addSubview(testBtn)
+        buttonsView.addSubview(uploadBtn)
+        buttonsView.addSubview(downloadBtn)
+
+        let syncGroup = SettingsGroupView(header: "同步", rows: [
+            SettingsRowView(title: "自动同步", subtitle: "保存设置时自动上传",
+                            accessory: s3AutoSyncToggle, isFirst: true),
+            SettingsRowView(title: "操作", accessory: buttonsView, isLast: true),
+        ])
+        syncGroup.frame.origin = NSPoint(x: 0, y: y)
+        syncGroup.autoresizingMask = .width
+        view.addSubview(syncGroup)
+        y += syncGroup.frame.height + 8
+
+        // Status label
+        s3StatusLabel = NSTextField(frame: NSRect(x: 10, y: y, width: contentW - 20, height: 18))
+        s3StatusLabel.isEditable = false; s3StatusLabel.isBordered = false
+        s3StatusLabel.backgroundColor = .clear; s3StatusLabel.drawsBackground = false
+        s3StatusLabel.font = NSFont.systemFont(ofSize: 11)
+        s3StatusLabel.textColor = NSColor.secondaryLabelColor
+        s3StatusLabel.stringValue = ""
+        view.addSubview(s3StatusLabel)
+        y += 24
+
+        // Help text
+        let helpText = NSTextField(frame: NSRect(x: 10, y: y, width: contentW - 20, height: 16))
+        helpText.isEditable = false; helpText.isBordered = false; helpText.backgroundColor = .clear; helpText.drawsBackground = false
+        helpText.font = NSFont.systemFont(ofSize: 10)
+        helpText.textColor = NSColor.tertiaryLabelColor
+        helpText.stringValue = "💡 AWS Sig V4 签名 | 支持 AWS / MinIO / R2 / OSS / COS / OBS"
+        view.addSubview(helpText)
+    }
+
+    @objc private func s3TestConnection(_ sender: NSButton) {
+        let c = collectS3Config()
+        s3StatusLabel.stringValue = "正在测试连接..."
+        s3StatusLabel.textColor = NSColor.secondaryLabelColor
+        sender.isEnabled = false
+
+        S3Sync.shared.testConnection(c) { [weak self] success, msg in
+            DispatchQueue.main.async {
+                self?.s3StatusLabel.stringValue = msg
+                self?.s3StatusLabel.textColor = success ? NSColor.systemGreen : NSColor.systemRed
+                sender.isEnabled = true
+            }
+        }
+    }
+
+    @objc private func s3Upload(_ sender: NSButton) {
+        var c = collectS3Config()
+        c.s3AutoSync = s3AutoSyncCheck.state == .on
+        s3StatusLabel.stringValue = "正在上传..."
+        s3StatusLabel.textColor = NSColor.secondaryLabelColor
+        sender.isEnabled = false
+
+        S3Sync.shared.uploadConfig(c) { [weak self] success, msg in
+            DispatchQueue.main.async {
+                self?.s3StatusLabel.stringValue = msg
+                self?.s3StatusLabel.textColor = success ? NSColor.systemGreen : NSColor.systemRed
+                sender.isEnabled = true
+            }
+        }
+    }
+
+    @objc private func s3Download(_ sender: NSButton) {
+        let c = collectS3Config()
+        s3StatusLabel.stringValue = "正在下载..."
+        s3StatusLabel.textColor = NSColor.secondaryLabelColor
+        sender.isEnabled = false
+
+        S3Sync.shared.downloadConfig(c) { [weak self] (success: Bool, msg: String, json: [String: Any]?) in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                sender.isEnabled = true
+                if success, let json = json {
+                    var config = self.appDelegate.config
+                    config.applyJSON(json)
+                    // 恢复 S3 凭证（不从远端覆盖）
+                    config.s3ProviderPreset = c.s3ProviderPreset
+                    config.s3Endpoint = c.s3Endpoint
+                    config.s3Region = c.s3Region
+                    config.s3Bucket = c.s3Bucket
+                    config.s3AccessKeyID = c.s3AccessKeyID
+                    config.s3SecretAccessKey = c.s3SecretAccessKey
+                    config.s3RemotePath = c.s3RemotePath
+                    config.save()
+                    self.syncFromConfig()
+                    self.s3StatusLabel.stringValue = "下载成功，配置已应用 ✓"
+                    self.s3StatusLabel.textColor = NSColor.systemGreen
+                } else {
+                    self.s3StatusLabel.stringValue = msg
+                    self.s3StatusLabel.textColor = NSColor.systemRed
+                }
+            }
+        }
+    }
+
+    private func collectS3Config() -> AppConfig {
+        var c = appDelegate.config
+        c.s3ProviderPreset = s3ProviderPopup.indexOfSelectedItem
+        c.s3Endpoint = s3EndpointField.stringValue.trimmingCharacters(in: .whitespaces)
+        c.s3Region = s3RegionField.stringValue.trimmingCharacters(in: .whitespaces)
+        c.s3Bucket = s3BucketField.stringValue.trimmingCharacters(in: .whitespaces)
+        c.s3AccessKeyID = s3AccessKeyIDField.stringValue
+        c.s3SecretAccessKey = s3SecretAccessKeyField.stringValue
+        c.s3RemotePath = s3RemotePathField.stringValue.trimmingCharacters(in: .whitespaces)
+        if c.s3RemotePath.isEmpty { c.s3RemotePath = "/codelight/config.json" }
         return c
     }
 

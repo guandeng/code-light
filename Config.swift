@@ -39,6 +39,15 @@ struct AppConfig {
     var webdavPass: String = ""    // WebDAV 密码/应用专用密码
     var webdavPath: String = "/codelight/config.json"  // 远程配置文件路径
     var webdavAutoSync: Bool = false  // 自动同步开关
+    // S3 同步
+    var s3ProviderPreset: Int = 0                    // S3Sync.presets 索引
+    var s3Endpoint: String = ""                      // 自定义 endpoint（覆盖预设）
+    var s3Region: String = "us-east-1"               // 区域
+    var s3Bucket: String = ""                        // 存储桶名
+    var s3AccessKeyID: String = ""                   // Access Key ID
+    var s3SecretAccessKey: String = ""               // Secret Access Key
+    var s3RemotePath: String = "/codelight/config.json"  // 远程对象路径
+    var s3AutoSync: Bool = false                     // S3 自动同步开关
     var skillsRepoURL: String = "anthropics/skills"   // owner/repo 格式
     var skillsCatalogPath: String = "skills"          // 仓库内 skills 目录路径
 
@@ -90,6 +99,15 @@ struct AppConfig {
         if ud.object(forKey: "webdavAutoSync") != nil { c.webdavAutoSync = ud.bool(forKey: "webdavAutoSync") }
         if let v = ud.string(forKey: "skillsRepoURL") { c.skillsRepoURL = v }
         if let v = ud.string(forKey: "skillsCatalogPath") { c.skillsCatalogPath = v }
+        // S3 同步
+        if ud.object(forKey: "s3ProviderPreset") != nil { c.s3ProviderPreset = ud.integer(forKey: "s3ProviderPreset") }
+        if let v = ud.string(forKey: "s3Endpoint") { c.s3Endpoint = v }
+        if let v = ud.string(forKey: "s3Region") { c.s3Region = v }
+        if let v = ud.string(forKey: "s3Bucket") { c.s3Bucket = v }
+        if let v = ud.string(forKey: "s3AccessKeyID") { c.s3AccessKeyID = v }
+        if let v = ud.string(forKey: "s3SecretAccessKey") { c.s3SecretAccessKey = v }
+        if let v = ud.string(forKey: "s3RemotePath") { c.s3RemotePath = v }
+        if ud.object(forKey: "s3AutoSync") != nil { c.s3AutoSync = ud.bool(forKey: "s3AutoSync") }
         return c
     }
 
@@ -131,6 +149,15 @@ struct AppConfig {
         ud.set(webdavAutoSync, forKey: "webdavAutoSync")
         ud.set(skillsRepoURL, forKey: "skillsRepoURL")
         ud.set(skillsCatalogPath, forKey: "skillsCatalogPath")
+        // S3 同步
+        ud.set(s3ProviderPreset, forKey: "s3ProviderPreset")
+        ud.set(s3Endpoint, forKey: "s3Endpoint")
+        ud.set(s3Region, forKey: "s3Region")
+        ud.set(s3Bucket, forKey: "s3Bucket")
+        ud.set(s3AccessKeyID, forKey: "s3AccessKeyID")
+        ud.set(s3SecretAccessKey, forKey: "s3SecretAccessKey")
+        ud.set(s3RemotePath, forKey: "s3RemotePath")
+        ud.set(s3AutoSync, forKey: "s3AutoSync")
     }
 
     /// 导出为 JSON（用于 WebDAV 同步，排除设备相关的位置信息）
