@@ -3,6 +3,7 @@ import CoreLocation
 import Foundation
 import Network
 import ServiceManagement
+import Sparkle
 import UserNotifications
 
 // ============================================================
@@ -321,6 +322,8 @@ class LightServer {
 // ============================================================
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    // Sparkle 自动更新
+    let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     var config = AppConfig.load()
     var lightWindow: NSWindow!
     var redView: RealTrafficLightView!
@@ -563,31 +566,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func menuCheckForUpdate() {
-        let currentVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-        let task = Process()
-        task.launchPath = "/usr/bin/env"
-        task.arguments = ["gh", "api", "repos/guandeng/code-light/releases/latest", "--jq", ".tag_name"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-        task.launch()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else {
-            let alert = NSAlert(); alert.messageText = "检查失败"; alert.informativeText = "请确认已安装 gh 并登录"; alert.runModal()
-            return
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let tagName = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let latestVer = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "v"))
-        if latestVer.compare(currentVer, options: .numeric) == .orderedDescending {
-            let alert = NSAlert(); alert.messageText = "发现新版本 \(tagName)"; alert.informativeText = "当前版本 v\(currentVer)"
-            alert.addButton(withTitle: "去下载"); alert.addButton(withTitle: "取消")
-            if alert.runModal() == .alertFirstButtonReturn {
-                if let url = URL(string: "https://github.com/guandeng/code-light/releases/latest") { NSWorkspace.shared.open(url) }
-            }
-        } else {
-            let alert = NSAlert(); alert.messageText = "当前已是最新版本"; alert.informativeText = "v\(currentVer)"; alert.runModal()
-        }
+        updaterController.checkForUpdates(nil)
     }
 
     @objc func openGitHub() {
@@ -1070,7 +1049,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let checkUpdateBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 80, height: 24))
         checkUpdateBtn.title = "检查更新"; checkUpdateBtn.bezelStyle = .rounded
         checkUpdateBtn.font = NSFont.systemFont(ofSize: 11)
-        checkUpdateBtn.target = self; checkUpdateBtn.action = #selector(checkForUpdate)
+        checkUpdateBtn.target = appDelegate.updaterController
+        checkUpdateBtn.action = #selector(SPUStandardUpdaterController.checkForUpdates(_:))
         updateAccessory.addSubview(checkUpdateBtn)
 
         updateStatusLabel = NSTextField(frame: NSRect(x: 88, y: 4, width: 180, height: 20))
@@ -1955,46 +1935,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func checkForUpdate() {
-        updateStatusLabel.stringValue = "正在检查..."
-        updateStatusLabel.textColor = NSColor.secondaryLabelColor
-        let currentVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-        let task = Process()
-        task.launchPath = "/usr/bin/env"
-        task.arguments = ["gh", "api", "repos/guandeng/code-light/releases/latest", "--jq", ".tag_name"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-        do {
-            try task.launch()
-            task.waitUntilExit()
-            guard task.terminationStatus == 0 else {
-                updateStatusLabel.stringValue = "检查失败（gh 未安装或未登录）"
-                updateStatusLabel.textColor = NSColor.systemRed
-                return
-            }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let tagName = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard tagName.hasPrefix("v") else {
-                updateStatusLabel.stringValue = "检查失败"
-                updateStatusLabel.textColor = NSColor.systemRed
-                return
-            }
-            let latestVer = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "v"))
-            if latestVer.compare(currentVer, options: .numeric) == .orderedDescending {
-                updateStatusLabel.stringValue = "发现新版本 \(tagName)"
-                updateStatusLabel.textColor = NSColor(red: 0.0, green: 0.70, blue: 0.16, alpha: 1.0)
-                let openTask = Process()
-                openTask.launchPath = "/usr/bin/open"
-                openTask.arguments = ["https://github.com/guandeng/code-light/releases/latest"]
-                try? openTask.launch()
-            } else {
-                updateStatusLabel.stringValue = "当前已是最新版本 (\(currentVer))"
-                updateStatusLabel.textColor = NSColor.secondaryLabelColor
-            }
-        } catch {
-            updateStatusLabel.stringValue = "检查失败"
-            updateStatusLabel.textColor = NSColor.systemRed
-        }
+        appDelegate.updaterController.checkForUpdates(nil)
     }
 
     // MARK: - Advanced Tab (WebDAV Sync)

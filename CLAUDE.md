@@ -38,15 +38,21 @@
    ```bash
    make release VERSION=X.Y.Z
    ```
-   会自动：编译 Universal Binary (arm64 + x86_64) → codesign → 打包 zip → 创建 GitHub Release
+   会自动：编译 → 嵌入 Sparkle → codesign → 打包 → 创建 GitHub Release
 
    > **注意**：
    > - GitHub Release 的 description 必须说明本次发布包含的功能/改进，不要留空。
    > - 编译产物为 Universal Binary，同时支持 Apple Silicon (arm64) 和 Intel (x86_64)。
 
-4. **验证**
+4. **更新 appcast.xml**（Sparkle 自动更新源）
+   - 用 `./sparkle-tools/sign_update CodeLight-vX.Y.Z.zip` 获取 EdDSA 签名
+   - 在 `appcast.xml` 中添加新的 `<item>`，包含签名、文件大小、下载 URL
+   - 提交并推送 appcast.xml
+
+5. **验证**
    - 确认 GitHub Release 页面出现新版本
    - 确认 zip 可下载
+   - 确认 appcast.xml 新版本条目指向正确的下载 URL
    - 运行 `lipo -info CodeLight.app/Contents/MacOS/CodeLight` 确认包含 `x86_64 arm64`
 
 ## 架构

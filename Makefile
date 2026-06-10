@@ -7,21 +7,39 @@ CLI_SRC = codelight-cli.swift
 SERVER_SRC = light-server.py
 BINARY = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 RESOURCES = $(APP_BUNDLE)/Contents/Resources
+FRAMEWORKS_DIR = $(APP_BUNDLE)/Contents/Frameworks
+SPARKLE_FRAMEWORK = Frameworks/Sparkle.framework
 
 .PHONY: build cli clean package release test test-unit test-integration
 
 build: ## 编译 Universal Binary (arm64 + x86_64)
 	swiftc -O -target arm64-apple-macosx13.0 \
+		-F Frameworks \
 		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
+		-framework Sparkle \
+		-Xlinker -rpath -Xlinker @loader_path/../Frameworks \
 		-o $(BINARY)-arm64 $(SWIFT_SRC)
 	swiftc -O -target x86_64-apple-macosx13.0 \
+		-F Frameworks \
 		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
+		-framework Sparkle \
+		-Xlinker -rpath -Xlinker @loader_path/../Frameworks \
 		-o $(BINARY)-x86_64 $(SWIFT_SRC)
 	lipo -create -output $(BINARY) $(BINARY)-arm64 $(BINARY)-x86_64
 	rm -f $(BINARY)-arm64 $(BINARY)-x86_64
 	-[ -f $(SERVER_SRC) ] && cp $(SERVER_SRC) $(RESOURCES)/light-server.py || true
+	# 注入 Sparkle 配置到 Info.plist
+	PLIST=$(APP_BUNDLE)/Contents/Info.plist; \
+	/usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://raw.githubusercontent.com/guandeng/code-light/main/appcast.xml" $$PLIST 2>/dev/null || true; \
+	/usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string fSb9D397ou5+cxPtcOeLuSBikrtD4jFXzGFWbQWdCRQ=" $$PLIST 2>/dev/null || true; \
+	/usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool true" $$PLIST 2>/dev/null || true
+	# 嵌入 Sparkle.framework
+	mkdir -p $(FRAMEWORKS_DIR)
+	cp -R $(SPARKLE_FRAMEWORK) $(FRAMEWORKS_DIR)/
+	# 先签 Sparkle.framework，再签 app
+	codesign --force --deep --sign - $(FRAMEWORKS_DIR)/Sparkle.framework
 	codesign --force --deep --sign - $(APP_BUNDLE)
-	@echo "✅ 编译完成: $(APP_BUNDLE) (Universal Binary)"
+	@echo "✅ 编译完成: $(APP_BUNDLE) (Universal Binary + Sparkle)"
 
 cli: ## 编译 CLI 工具 (Universal Binary)
 	swiftc -O -arch arm64 -arch x86_64 -o codelight $(CLI_SRC)
@@ -29,14 +47,18 @@ cli: ## 编译 CLI 工具 (Universal Binary)
 
 clean: ## 清理编译产物
 	rm -f $(BINARY) codelight
+	rm -rf $(FRAMEWORKS_DIR)
 	@echo "🧹 已清理"
 
-package: build ## 打包 zip
+package: build ## 打包 zip（用 ditto 保留 framework 符号链接）
 	rm -f $(ZIP_FILE)
-	zip -r $(ZIP_FILE) $(APP_BUNDLE)
+	ditto -c -k --sequesterRsrc --keepParent $(APP_BUNDLE) $(ZIP_FILE)
 	@echo "📦 打包完成: $(ZIP_FILE)"
 
-release: package ## 编译 + 打包 + 创建 GitHub Release（用法: make release VERSION=1.0.1）
+release: package ## 编译 + 打包 + 签名更新 + 创建 GitHub Release（用法: make release VERSION=1.0.1）
+	# 签名更新包
+	./sparkle-tools/sign_update $(ZIP_FILE) > /tmp/sparkle_sig.txt 2>/dev/null || true
+	# 创建 GitHub Release
 	gh release create v$(VERSION) $(ZIP_FILE) \
 		--title "v$(VERSION)" \
 		--notes "$(shell cat release-notes.md 2>/dev/null || echo 'See README for details.')"
