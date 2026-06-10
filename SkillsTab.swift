@@ -25,7 +25,9 @@ extension SettingsWindowController {
         y += segGroup.frame.height + 4
 
         // --- 安装来源配置区（仅"发现"模式可见）---
-        skillsRepoConfigView = NSView(frame: NSRect(x: 16, y: y, width: contentW - 32, height: 0))
+        // 注意：config view 浮在列表之上，不占据 y 空间
+        let configBaseY = y  // 记录当前位置，发现模式时使用
+        skillsRepoConfigView = NSView(frame: NSRect(x: 16, y: configBaseY, width: contentW - 32, height: 0))
         skillsRepoConfigView.wantsLayer = true
         container.addSubview(skillsRepoConfigView)
         skillsRepoConfigView.isHidden = true  // 默认"已安装"模式
@@ -145,7 +147,8 @@ extension SettingsWindowController {
         ry += 34
 
         skillsRepoConfigView.frame.size.height = ry
-        y += ry
+        // 不更新 y！config view 是浮层，不占据空间
+        skillsDiscoverListY = configBaseY + ry  // 发现模式：列表在 config view 之后
 
         // --- 状态标签 ---
         skillsStatusLabel = NSTextField(frame: NSRect(x: 16, y: y, width: contentW - 32, height: 18))
@@ -167,15 +170,8 @@ extension SettingsWindowController {
         skillsListTopY = y
         skillsContainerHeight = contentW - 32
 
-        // 记录「已安装」和「发现」模式下列表的不同起始 Y
-        // 已安装模式：列表紧跟在分段控件之后
-        skillsInstalledListY = segGroup.frame.origin.y + segGroup.frame.height + 4
-        skillsDiscoverListY = y
-
-        // 初始加载已安装列表（手动定位到紧凑位置）
-        skillsStatusLabel.frame.origin.y = skillsInstalledListY
-        skillsListContainer.frame.origin.y = skillsInstalledListY + 16
-        skillsListTopY = skillsInstalledListY + 16
+        // 已安装模式：y 就是当前位置（config view 没撑大 y）
+        skillsInstalledListY = y
 
         // 初始加载已安装列表
         rebuildSkillsList()
@@ -185,21 +181,15 @@ extension SettingsWindowController {
 
     @objc func skillsSegmentChanged(_ sender: NSSegmentedControl) {
         let isDiscover = sender.selectedSegment == 1
-        skillsRepoConfigView.isHidden = !isDiscover
-
-        // 动态调整列表位置：已安装模式紧凑，发现模式留出配置区空间
-        let listY = isDiscover ? skillsDiscoverListY : skillsInstalledListY
-        skillsStatusLabel.frame.origin.y = listY
-        skillsListContainer.frame.origin.y = listY + 16
-        skillsListTopY = listY + 16
-
-        // 重置 docView 高度，避免残留高度
-        if let docView = skillsListContainer?.superview {
-            docView.frame.size.height = listY + 16 + 200
-        }
 
         if isDiscover {
-            // 先清空旧列表，避免已安装内容残留在「发现」模式
+            // 发现模式：config view 浮在列表之上
+            skillsRepoConfigView.isHidden = false
+            // 状态标签和列表移到 config view 下方
+            skillsStatusLabel.frame.origin.y = skillsDiscoverListY
+            skillsListContainer.frame.origin.y = skillsDiscoverListY + 16
+            skillsListTopY = skillsDiscoverListY + 16
+
             skillsListContainer?.subviews.forEach { $0.removeFromSuperview() }
             updateInstallSourceView()
             if skillsRemoteItems.isEmpty {
@@ -208,6 +198,16 @@ extension SettingsWindowController {
                 rebuildSkillsDiscoverList()
             }
         } else {
+            // 已安装模式：隐藏 config view，列表回到紧凑位置
+            skillsRepoConfigView.isHidden = true
+            skillsStatusLabel.frame.origin.y = skillsInstalledListY
+            skillsListContainer.frame.origin.y = skillsInstalledListY + 16
+            skillsListTopY = skillsInstalledListY + 16
+
+            // 重置 docView 高度
+            if let docView = skillsListContainer?.superview {
+                docView.frame.size.height = skillsInstalledListY + 16 + 200
+            }
             rebuildSkillsList()
         }
     }
