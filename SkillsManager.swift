@@ -303,6 +303,259 @@ class SkillsManager {
             return fm.fileExists(atPath: flatPath) || fm.fileExists(atPath: skillPath)
         }
     }
+
+    // MARK: - Multi-Source Install
+
+    /// 从 Git 仓库克隆安装
+    func installFromGit(url: String, completion: @escaping (Result<[SkillItem], SkillsError>) -> Void) {
+        let tmpDir = NSTemporaryDirectory() + "codelight-git-\(UUID().uuidString)"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        task.arguments = ["clone", "--depth", "1", url, tmpDir]
+        let pipe = Pipe()
+        task.standardError = pipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            if task.terminationStatus != 0 {
+                let errMsg = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "未知错误"
+                try? fm.removeItem(atPath: tmpDir)
+                completion(.failure(.message("Git 克隆失败: \(errMsg.prefix(200))")))
+                return
+            }
+            let items = scanDirectoryForSkills(tmpDir)
+            try? fm.removeItem(atPath: tmpDir)
+            if items.isEmpty {
+                completion(.failure(.message("仓库中未找到可安装的技能文件")))
+            } else {
+                completion(.success(items))
+            }
+        } catch {
+            try? fm.removeItem(atPath: tmpDir)
+            completion(.failure(.message("执行 git clone 失败: \(error.localizedDescription)")))
+        }
+    }
+
+    /// 从本地目录导入
+    func importFromDirectory(path: String) -> Result<[SkillItem], SkillsError> {
+        let items = scanDirectoryForSkills(path)
+        if items.isEmpty {
+            return .failure(.message("目录中未找到可安装的技能文件"))
+        }
+        return .success(items)
+    }
+
+    /// 从压缩包安装
+    func installFromZip(path: String, completion: @escaping (Result<[SkillItem], SkillsError>) -> Void) {
+        let tmpDir = NSTemporaryDirectory() + "codelight-zip-\(UUID().uuidString)"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        task.arguments = ["-o", path, "-d", tmpDir]
+        let pipe = Pipe()
+        task.standardError = pipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            if task.terminationStatus != 0 {
+                let errMsg = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "未知错误"
+                try? fm.removeItem(atPath: tmpDir)
+                completion(.failure(.message("解压失败: \(errMsg.prefix(200))")))
+                return
+            }
+            let items = scanDirectoryForSkills(tmpDir)
+            try? fm.removeItem(atPath: tmpDir)
+            if items.isEmpty {
+                completion(.failure(.message("压缩包中未找到可安装的技能文件")))
+            } else {
+                completion(.success(items))
+            }
+        } catch {
+            try? fm.removeItem(atPath: tmpDir)
+            completion(.failure(.message("执行 unzip 失败: \(error.localizedDescription)")))
+        }
+    }
+
+    /// 扫描目录中的技能文件并安装到 ~/.claude/
+    private func scanDirectoryForSkills(_ dir: String) -> [SkillItem] {
+        var items: [SkillItem] = []
+
+        // 扫描 commands/*.md → 安装到 ~/.claude/commands/
+        let cmdPath = (dir as NSString).appendingPathComponent("commands")
+        if let files = try? fm.contentsOfDirectory(atPath: cmdPath) {
+            for file in files where file.hasSuffix(".md") {
+                let name = (file as NSString).deletingPathExtension
+                let srcPath = (cmdPath as NSString).appendingPathComponent(file)
+                guard let content = try? String(contentsOfFile: srcPath, encoding: .utf8) else { continue }
+                let meta = parseFrontmatter(from: content)
+                let destPath = (commandsDir as NSString).appendingPathComponent(file)
+                try? fm.createDirectory(atPath: commandsDir, withIntermediateDirectories: true)
+                try? content.write(toFile: destPath, atomically: true, encoding: .utf8)
+                items.append(SkillItem(
+                    name: meta.name.isEmpty ? name : meta.name,
+                    description: meta.description,
+                    type: .command, source: .local,
+                    localPath: destPath, downloadURL: nil,
+                    repoOwner: nil, repoName: nil, remotePath: nil
+                ))
+            }
+        }
+
+        // 扫描 skills/ 子目录 → 安装到 ~/.claude/skills/
+        let skillsPath = (dir as NSString).appendingPathComponent("skills")
+        if let entries = try? fm.contentsOfDirectory(atPath: skillsPath) {
+            for entry in entries {
+                let entryPath = (skillsPath as NSString).appendingPathComponent(entry)
+                var isDir: ObjCBool = false
+                fm.fileExists(atPath: entryPath, isDirectory: &isDir)
+                if isDir.boolValue {
+                    let skillFile = (entryPath as NSString).appendingPathComponent("SKILL.md")
+                    if fm.fileExists(atPath: skillFile),
+                       let content = try? String(contentsOfFile: skillFile, encoding: .utf8) {
+                        let meta = parseFrontmatter(from: content)
+                        let destDir = (skillsDir as NSString).appendingPathComponent(entry)
+                        let destFile = (destDir as NSString).appendingPathComponent("SKILL.md")
+                        try? fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
+                        try? content.write(toFile: destFile, atomically: true, encoding: .utf8)
+                        items.append(SkillItem(
+                            name: meta.name.isEmpty ? entry : meta.name,
+                            description: meta.description,
+                            type: .skill, source: .local,
+                            localPath: destFile, downloadURL: nil,
+                            repoOwner: nil, repoName: nil, remotePath: nil
+                        ))
+                    }
+                } else if entry.hasSuffix(".md") {
+                    // 平铺 .md 文件
+                    let name = (entry as NSString).deletingPathExtension
+                    guard let content = try? String(contentsOfFile: entryPath, encoding: .utf8) else { continue }
+                    let meta = parseFrontmatter(from: content)
+                    let destPath = (skillsDir as NSString).appendingPathComponent(entry)
+                    try? fm.createDirectory(atPath: skillsDir, withIntermediateDirectories: true)
+                    try? content.write(toFile: destPath, atomically: true, encoding: .utf8)
+                    items.append(SkillItem(
+                        name: meta.name.isEmpty ? name : meta.name,
+                        description: meta.description,
+                        type: .skill, source: .local,
+                        localPath: destPath, downloadURL: nil,
+                        repoOwner: nil, repoName: nil, remotePath: nil
+                    ))
+                }
+            }
+        }
+
+        // 如果没有 commands/ 和 skills/ 子目录，扫描根目录的 .md 文件
+        if items.isEmpty, let rootFiles = try? fm.contentsOfDirectory(atPath: dir) {
+            for file in rootFiles where file.hasSuffix(".md") {
+                let name = (file as NSString).deletingPathExtension
+                let srcPath = (dir as NSString).appendingPathComponent(file)
+                guard let content = try? String(contentsOfFile: srcPath, encoding: .utf8) else { continue }
+                let meta = parseFrontmatter(from: content)
+                let destPath = (commandsDir as NSString).appendingPathComponent(file)
+                try? fm.createDirectory(atPath: commandsDir, withIntermediateDirectories: true)
+                try? content.write(toFile: destPath, atomically: true, encoding: .utf8)
+                items.append(SkillItem(
+                    name: meta.name.isEmpty ? name : meta.name,
+                    description: meta.description,
+                    type: .command, source: .local,
+                    localPath: destPath, downloadURL: nil,
+                    repoOwner: nil, repoName: nil, remotePath: nil
+                ))
+            }
+        }
+
+        return items
+    }
+
+    // MARK: - Agent Detection
+
+    struct AgentInfo {
+        let id: String
+        let name: String
+        let icon: String
+        let skillsPath: String
+        let commandsPath: String
+    }
+
+    static let knownAgents: [AgentInfo] = [
+        AgentInfo(id: "claude-code", name: "Claude Code", icon: "🟠",
+                  skillsPath: NSHomeDirectory() + "/.claude/skills",
+                  commandsPath: NSHomeDirectory() + "/.claude/commands"),
+        AgentInfo(id: "cursor", name: "Cursor", icon: "🔵",
+                  skillsPath: NSHomeDirectory() + "/.cursor/skills",
+                  commandsPath: NSHomeDirectory() + "/.cursor/commands"),
+        AgentInfo(id: "codex", name: "Codex", icon: "🟢",
+                  skillsPath: NSHomeDirectory() + "/.codex/skills",
+                  commandsPath: NSHomeDirectory() + "/.codex/commands"),
+    ]
+
+    /// 检查一个 skill/command 文件在哪些 agent 中存在
+    func detectAgents(for item: SkillItem) -> [String] {
+        var agents: [String] = []
+        let fileName = (item.localPath as NSString?)?.lastPathComponent ?? ""
+        let skillDirName = item.type == .skill
+            ? ((item.localPath as NSString?)?.deletingLastPathComponent as NSString?)?.lastPathComponent ?? ""
+            : ""
+
+        for agent in SkillsManager.knownAgents {
+            var found = false
+            if item.type == .command {
+                let path = (agent.commandsPath as NSString).appendingPathComponent(fileName)
+                found = fm.fileExists(atPath: path)
+            } else {
+                let flatPath = (agent.skillsPath as NSString).appendingPathComponent(fileName)
+                let dirPath = (agent.skillsPath as NSString).appendingPathComponent(skillDirName)
+                let skillPath = (dirPath as NSString).appendingPathComponent("SKILL.md")
+                found = fm.fileExists(atPath: flatPath) || fm.fileExists(atPath: skillPath)
+            }
+            if found { agents.append(agent.id) }
+        }
+        return agents
+    }
+
+    /// 将 skill 同步到指定 agent
+    func syncToAgent(item: SkillItem, agentId: String) -> Bool {
+        guard let agent = SkillsManager.knownAgents.first(where: { $0.id == agentId }),
+              let srcPath = item.localPath,
+              let content = try? String(contentsOfFile: srcPath, encoding: .utf8) else { return false }
+
+        if item.type == .command {
+            let fileName = (srcPath as NSString).lastPathComponent
+            let destDir = agent.commandsPath
+            let destPath = (destDir as NSString).appendingPathComponent(fileName)
+            do {
+                try fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
+                try content.write(toFile: destPath, atomically: true, encoding: .utf8)
+                return true
+            } catch { return false }
+        } else {
+            let skillDirName = ((srcPath as NSString).deletingLastPathComponent as NSString).lastPathComponent
+            let destDir = (agent.skillsPath as NSString).appendingPathComponent(skillDirName)
+            let destPath = (destDir as NSString).appendingPathComponent("SKILL.md")
+            do {
+                try fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
+                try content.write(toFile: destPath, atomically: true, encoding: .utf8)
+                return true
+            } catch { return false }
+        }
+    }
+
+    /// 从指定 agent 移除 skill
+    func removeFromAgent(item: SkillItem, agentId: String) -> Bool {
+        guard let agent = SkillsManager.knownAgents.first(where: { $0.id == agentId }),
+              let srcPath = item.localPath else { return false }
+
+        if item.type == .command {
+            let fileName = (srcPath as NSString).lastPathComponent
+            let destPath = (agent.commandsPath as NSString).appendingPathComponent(fileName)
+            return (try? fm.removeItem(atPath: destPath)) != nil
+        } else {
+            let skillDirName = ((srcPath as NSString).deletingLastPathComponent as NSString).lastPathComponent
+            let destDir = (agent.skillsPath as NSString).appendingPathComponent(skillDirName)
+            return (try? fm.removeItem(atPath: destDir)) != nil
+        }
+    }
 }
 
 // MARK: - SkillsGitHubClient (remote discovery)

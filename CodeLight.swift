@@ -818,6 +818,13 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var skillsRemoteItems: [SkillItem] = []
     var skillsRemoteContents: [String: String] = [:]
     var installedFilterSegment: NSSegmentedControl!
+    var installSourceSegment: NSSegmentedControl!
+    var skillsRepoPopup: NSPopUpButton!
+    var skillsMarketContainer: NSView!
+    var skillsGitContainer: NSView!
+    var skillsDirContainer: NSView!
+    var skillsZipContainer: NSView!
+    var skillsGitField: NSTextField!
     let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "☁️ 高级", "📊 统计", "🧩 技能"]
 
     init(appDelegate: AppDelegate) {

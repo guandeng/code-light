@@ -42,6 +42,13 @@ struct AppConfig {
     var skillsRepoURL: String = "anthropics/skills"   // owner/repo 格式
     var skillsCatalogPath: String = "skills"          // 仓库内 skills 目录路径
 
+    /// 预置市场仓库列表
+    static let presetRepos: [(name: String, owner: String, repo: String, path: String)] = [
+        ("Anthropic 官方", "anthropics", "skills", "skills"),
+        ("Vercel Agent Skills", "vercel-labs", "agent-skills", ""),
+        ("Microsoft Azure", "microsoft", "azure-skills", ""),
+    ]
+
     static func load() -> AppConfig {
         let ud = UserDefaults.standard
         var c = AppConfig()

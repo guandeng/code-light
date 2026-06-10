@@ -24,7 +24,7 @@ extension SettingsWindowController {
         container.addSubview(segGroup)
         y += segGroup.frame.height + 8
 
-        // --- 仓库配置区（仅"发现"模式可见）---
+        // --- 安装来源配置区（仅"发现"模式可见）---
         skillsRepoConfigView = NSView(frame: NSRect(x: 16, y: y, width: contentW - 32, height: 0))
         skillsRepoConfigView.wantsLayer = true
         container.addSubview(skillsRepoConfigView)
@@ -32,29 +32,56 @@ extension SettingsWindowController {
 
         var ry: CGFloat = 0
 
-        // 仓库地址输入框
-        let repoField = NSTextField(frame: NSRect(x: 0, y: ry, width: contentW - 170, height: 26))
+        // 来源选择分段控件
+        installSourceSegment = NSSegmentedControl(labels: ["🌐 市场", "🔗 Git", "📂 目录", "📦 压缩包"], trackingMode: .selectOne, target: self, action: #selector(installSourceChanged(_:)))
+        installSourceSegment.selectedSegment = 0
+        installSourceSegment.frame = NSRect(x: 0, y: ry, width: 400, height: 26)
+        installSourceSegment.sizeToFit()
+        skillsRepoConfigView.addSubview(installSourceSegment)
+        ry += 34
+
+        // --- 市场模式容器 ---
+        skillsMarketContainer = NSView(frame: NSRect(x: 0, y: ry, width: contentW - 32, height: 0))
+        skillsRepoConfigView.addSubview(skillsMarketContainer)
+
+        var my: CGFloat = 0
+        // 预置仓库下拉
+        let repoPopup = NSPopUpButton(frame: NSRect(x: 0, y: my, width: contentW - 170, height: 26))
+        repoPopup.font = NSFont.systemFont(ofSize: 12)
+        for preset in AppConfig.presetRepos {
+            repoPopup.addItem(withTitle: "\(preset.name) (\(preset.owner)/\(preset.repo))")
+        }
+        repoPopup.addItem(withTitle: "自定义...")
+        repoPopup.target = self
+        repoPopup.action = #selector(skillsRepoPopupChanged(_:))
+        skillsRepoPopup = repoPopup
+        skillsMarketContainer.addSubview(repoPopup)
+        my += 34
+
+        // 自定义仓库输入框（默认隐藏）
+        let repoField = NSTextField(frame: NSRect(x: 0, y: my, width: contentW - 170, height: 26))
         repoField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         repoField.placeholderString = "owner/repo，如 anthropics/skills"
         repoField.stringValue = c.skillsRepoURL
         repoField.target = self
         repoField.action = #selector(skillsRepoFieldChanged(_:))
         repoField.usesSingleLineMode = true
+        repoField.isHidden = true
         skillsRepoField = repoField
-        skillsRepoConfigView.addSubview(repoField)
-        ry += 34
+        skillsMarketContainer.addSubview(repoField)
 
         // 路径输入框
-        let pathField = NSTextField(frame: NSRect(x: 0, y: ry, width: contentW - 170, height: 26))
+        let pathField = NSTextField(frame: NSRect(x: 0, y: my, width: contentW - 170, height: 26))
         pathField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         pathField.placeholderString = "仓库内路径，如 skills"
         pathField.stringValue = c.skillsCatalogPath
         pathField.target = self
         pathField.action = #selector(skillsRepoFieldChanged(_:))
         pathField.usesSingleLineMode = true
+        pathField.isHidden = true
         skillsPathField = pathField
-        skillsRepoConfigView.addSubview(pathField)
-        ry += 38
+        skillsMarketContainer.addSubview(pathField)
+        my += 34
 
         // 刷新按钮
         let refreshBtn = NSButton(frame: NSRect(x: contentW - 148, y: 0, width: 116, height: 60))
@@ -63,7 +90,59 @@ extension SettingsWindowController {
         refreshBtn.font = NSFont.systemFont(ofSize: 12)
         refreshBtn.target = self
         refreshBtn.action = #selector(skillsRefreshRemote(_:))
-        skillsRepoConfigView.addSubview(refreshBtn)
+        skillsMarketContainer.addSubview(refreshBtn)
+
+        skillsMarketContainer.frame.size.height = my
+        ry += my
+
+        // --- Git 模式容器 ---
+        skillsGitContainer = NSView(frame: NSRect(x: 0, y: ry, width: contentW - 32, height: 56))
+        skillsGitContainer.isHidden = true
+        skillsRepoConfigView.addSubview(skillsGitContainer)
+
+        let gitField = NSTextField(frame: NSRect(x: 0, y: 28, width: contentW - 170, height: 26))
+        gitField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        gitField.placeholderString = "Git 仓库 URL，如 https://github.com/user/skills"
+        gitField.usesSingleLineMode = true
+        skillsGitField = gitField
+        skillsGitContainer.addSubview(gitField)
+
+        let gitBtn = NSButton(frame: NSRect(x: contentW - 148, y: 28, width: 116, height: 26))
+        gitBtn.title = "克隆安装"
+        gitBtn.bezelStyle = .rounded
+        gitBtn.font = NSFont.systemFont(ofSize: 12)
+        gitBtn.target = self
+        gitBtn.action = #selector(skillsGitInstall(_:))
+        skillsGitContainer.addSubview(gitBtn)
+        ry += 56
+
+        // --- 目录模式容器 ---
+        skillsDirContainer = NSView(frame: NSRect(x: 0, y: ry, width: contentW - 32, height: 34))
+        skillsDirContainer.isHidden = true
+        skillsRepoConfigView.addSubview(skillsDirContainer)
+
+        let dirBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26))
+        dirBtn.title = "📂 选择目录导入..."
+        dirBtn.bezelStyle = .rounded
+        dirBtn.font = NSFont.systemFont(ofSize: 12)
+        dirBtn.target = self
+        dirBtn.action = #selector(skillsDirImport(_:))
+        skillsDirContainer.addSubview(dirBtn)
+        ry += 34
+
+        // --- 压缩包模式容器 ---
+        skillsZipContainer = NSView(frame: NSRect(x: 0, y: ry, width: contentW - 32, height: 34))
+        skillsZipContainer.isHidden = true
+        skillsRepoConfigView.addSubview(skillsZipContainer)
+
+        let zipBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26))
+        zipBtn.title = "📦 选择压缩包导入..."
+        zipBtn.bezelStyle = .rounded
+        zipBtn.font = NSFont.systemFont(ofSize: 12)
+        zipBtn.target = self
+        zipBtn.action = #selector(skillsZipImport(_:))
+        skillsZipContainer.addSubview(zipBtn)
+        ry += 34
 
         skillsRepoConfigView.frame.size.height = ry
         y += ry
@@ -98,12 +177,70 @@ extension SettingsWindowController {
         let isDiscover = sender.selectedSegment == 1
         skillsRepoConfigView.isHidden = !isDiscover
 
-        if isDiscover && skillsRemoteItems.isEmpty {
-            skillsRefreshRemote(sender)
-        } else if isDiscover {
-            rebuildSkillsDiscoverList()
+        if isDiscover {
+            updateInstallSourceView()
+            if skillsRemoteItems.isEmpty {
+                skillsRefreshRemote(sender)
+            } else {
+                rebuildSkillsDiscoverList()
+            }
         } else {
             rebuildSkillsList()
+        }
+    }
+
+    // MARK: - Install Source Changed
+
+    @objc func installSourceChanged(_ sender: NSSegmentedControl) {
+        updateInstallSourceView()
+        // 切换到市场时自动加载
+        if sender.selectedSegment == 0 && skillsRemoteItems.isEmpty {
+            skillsRefreshRemote(sender)
+        }
+    }
+
+    private func updateInstallSourceView() {
+        let idx = installSourceSegment?.selectedSegment ?? 0
+        skillsMarketContainer?.isHidden = (idx != 0)
+        skillsGitContainer?.isHidden = (idx != 1)
+        skillsDirContainer?.isHidden = (idx != 2)
+        skillsZipContainer?.isHidden = (idx != 3)
+        // 非"发现"的市场模式时清空列表
+        if idx != 0 {
+            guard let lc = skillsListContainer else { return }
+            lc.subviews.forEach { $0.removeFromSuperview() }
+            let empty = NSTextField(frame: NSRect(x: 16, y: 8, width: lc.frame.width - 32, height: 24))
+            empty.isEditable = false; empty.isBordered = false; empty.backgroundColor = .clear
+            empty.font = NSFont.systemFont(ofSize: 12)
+            empty.textColor = NSColor.tertiaryLabelColor
+            empty.stringValue = idx == 1 ? "输入 Git 仓库 URL 后点击「克隆安装」" : (idx == 2 ? "点击「选择目录」导入本地技能" : "点击「选择压缩包」导入 .zip 技能")
+            empty.alignment = .center
+            lc.addSubview(empty)
+            adjustSkillsListHeight(lc, maxY: 48)
+        }
+    }
+
+    // MARK: - Repo Popup Changed
+
+    @objc func skillsRepoPopupChanged(_ sender: NSPopUpButton) {
+        let idx = sender.indexOfSelectedItem
+        let isCustom = (idx >= AppConfig.presetRepos.count)
+        skillsRepoField?.isHidden = !isCustom
+        skillsPathField?.isHidden = !isCustom
+
+        if !isCustom {
+            let preset = AppConfig.presetRepos[idx]
+            var c = appDelegate.config
+            c.skillsRepoURL = "\(preset.owner)/\(preset.repo)"
+            c.skillsCatalogPath = preset.path
+            c.save()
+            appDelegate.config = c
+            skillsRepoField?.stringValue = c.skillsRepoURL
+            skillsPathField?.stringValue = c.skillsCatalogPath
+            SkillsGitHubClient.shared.invalidateCache()
+            skillsRemoteItems = []
+            skillsRemoteContents = [:]
+            skillsRefreshRemote(sender)
         }
     }
 
@@ -257,12 +394,23 @@ extension SettingsWindowController {
                 let btn = NSButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
                 btn.bezelStyle = .rounded
                 btn.font = NSFont.systemFont(ofSize: 11)
-                // tag 用 displayItems 索引 → 在 uninstall 时从 allItems 找对应项
                 btn.tag = idx
+
+                // Agent 徽章：在描述后追加 agent 图标
+                let agents = SkillsManager.shared.detectAgents(for: item)
+                var subtitle = item.description.isEmpty ? "" : String(item.description.prefix(60))
+                if !agents.isEmpty {
+                    let badges = agents.compactMap { id -> String? in
+                        SkillsManager.knownAgents.first(where: { $0.id == id })?.icon
+                    }.joined()
+                    if !subtitle.isEmpty { subtitle += "  " }
+                    subtitle += badges
+                }
+
                 let displayName = item.type == .command ? "/\(item.name)" : item.name
                 return SettingsRowView(
                     title: displayName,
-                    subtitle: item.description.isEmpty ? nil : String(item.description.prefix(80)),
+                    subtitle: subtitle.isEmpty ? nil : subtitle,
                     accessory: btn,
                     isFirst: idx == 0,
                     isLast: idx == displayItems.count - 1
@@ -412,6 +560,97 @@ extension SettingsWindowController {
         } else {
             skillsStatusLabel.stringValue = "卸载失败：删除文件失败"
             skillsStatusLabel.textColor = NSColor.systemRed
+        }
+    }
+
+    // MARK: - Git Install
+
+    @objc func skillsGitInstall(_ sender: NSButton) {
+        guard let url = skillsGitField?.stringValue, !url.isEmpty else {
+            skillsStatusLabel.stringValue = "请输入 Git 仓库 URL"
+            skillsStatusLabel.textColor = NSColor.systemRed
+            return
+        }
+        sender.title = "克隆中..."
+        sender.isEnabled = false
+        skillsStatusLabel.stringValue = "正在从 Git 仓库克隆..."
+        skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            SkillsManager.shared.installFromGit(url: url) { result in
+                DispatchQueue.main.async {
+                    sender.title = "克隆安装"
+                    sender.isEnabled = true
+                    switch result {
+                    case .success(let items):
+                        self.skillsStatusLabel.stringValue = "✅ 从 Git 安装了 \(items.count) 个技能"
+                        self.skillsStatusLabel.textColor = NSColor.systemGreen
+                        self.rebuildSkillsList()
+                    case .failure(let err):
+                        self.skillsStatusLabel.stringValue = err.description
+                        self.skillsStatusLabel.textColor = NSColor.systemRed
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Directory Import
+
+    @objc func skillsDirImport(_ sender: NSButton) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.title = "选择技能目录"
+        panel.prompt = "导入"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let path = url.path
+
+        switch SkillsManager.shared.importFromDirectory(path: path) {
+        case .success(let items):
+            skillsStatusLabel.stringValue = "✅ 从目录导入了 \(items.count) 个技能"
+            skillsStatusLabel.textColor = NSColor.systemGreen
+            rebuildSkillsList()
+        case .failure(let err):
+            skillsStatusLabel.stringValue = err.description
+            skillsStatusLabel.textColor = NSColor.systemRed
+        }
+    }
+
+    // MARK: - Zip Import
+
+    @objc func skillsZipImport(_ sender: NSButton) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = "选择技能压缩包"
+        panel.prompt = "导入"
+        panel.allowedContentTypes = [.init(filenameExtension: "zip")!]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        skillsStatusLabel.stringValue = "正在解压安装..."
+        skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            SkillsManager.shared.installFromZip(path: url.path) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let items):
+                        self.skillsStatusLabel.stringValue = "✅ 从压缩包安装了 \(items.count) 个技能"
+                        self.skillsStatusLabel.textColor = NSColor.systemGreen
+                        self.rebuildSkillsList()
+                    case .failure(let err):
+                        self.skillsStatusLabel.stringValue = err.description
+                        self.skillsStatusLabel.textColor = NSColor.systemRed
+                    }
+                }
+            }
         }
     }
 
