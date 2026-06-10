@@ -23,6 +23,8 @@ struct SkillItem {
     let repoName: String?
     let remotePath: String?
     var isInstalled: Bool = false
+    var sourceURL: String?       // 来源地址（GitHub repo / plugin homepage）
+    var sourceGroup: String?     // 分组名（如插件名 "pua"、或 "本地命令"、"本地技能"）
 }
 
 // MARK: - SkillsManager (local scanning + install/uninstall)
@@ -58,7 +60,8 @@ class SkillsManager {
                         description: meta.description,
                         type: .skill, source: .local,
                         localPath: skillFile, downloadURL: nil,
-                        repoOwner: nil, repoName: nil, remotePath: nil
+                        repoOwner: nil, repoName: nil, remotePath: nil,
+                        sourceGroup: "本地技能"
                     ))
                 }
             } else if entry.hasSuffix(".md") {
@@ -71,7 +74,8 @@ class SkillsManager {
                     description: meta.description,
                     type: .skill, source: .local,
                     localPath: fullPath, downloadURL: nil,
-                    repoOwner: nil, repoName: nil, remotePath: nil
+                    repoOwner: nil, repoName: nil, remotePath: nil,
+                    sourceGroup: "本地技能"
                 ))
             }
         }
@@ -93,7 +97,8 @@ class SkillsManager {
                 description: meta.description,
                 type: .command, source: .local,
                 localPath: fullPath, downloadURL: nil,
-                repoOwner: nil, repoName: nil, remotePath: nil
+                repoOwner: nil, repoName: nil, remotePath: nil,
+                sourceGroup: "本地命令"
             ))
         }
         return items
@@ -112,14 +117,17 @@ class SkillsManager {
             fm.fileExists(atPath: pluginPath, isDirectory: &isDir)
             guard isDir.boolValue else { continue }
 
-            // 读取 plugin.json 获取命名空间
+            // 读取 plugin.json 获取命名空间和来源信息
             let pluginJsonPath = (pluginPath as NSString).appendingPathComponent("plugin.json")
             var namespace = pluginEntry
+            var homepage: String? = nil
             if let data = fm.contents(atPath: pluginJsonPath),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let name = json["name"] as? String {
-                namespace = name
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let name = json["name"] as? String { namespace = name }
+                if let hp = json["homepage"] as? String { homepage = hp }
+                if homepage == nil, let repo = json["repository"] as? String { homepage = repo }
             }
+            let group = "🔌 \(namespace)"
 
             // 扫描 commands/*.md
             let commandsPath = (pluginPath as NSString).appendingPathComponent("commands")
@@ -134,7 +142,8 @@ class SkillsManager {
                         description: meta.description,
                         type: .command, source: .local,
                         localPath: fullPath, downloadURL: nil,
-                        repoOwner: nil, repoName: nil, remotePath: nil
+                        repoOwner: nil, repoName: nil, remotePath: nil,
+                        sourceURL: homepage, sourceGroup: group
                     ))
                 }
             }
@@ -157,7 +166,8 @@ class SkillsManager {
                             description: meta.description,
                             type: .skill, source: .local,
                             localPath: skillFile, downloadURL: nil,
-                            repoOwner: nil, repoName: nil, remotePath: nil
+                            repoOwner: nil, repoName: nil, remotePath: nil,
+                            sourceURL: homepage, sourceGroup: group
                         ))
                     }
                 }

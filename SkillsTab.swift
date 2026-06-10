@@ -167,6 +167,16 @@ extension SettingsWindowController {
         skillsListTopY = y
         skillsContainerHeight = contentW - 32
 
+        // 记录「已安装」和「发现」模式下列表的不同起始 Y
+        // 已安装模式：列表紧跟在分段控件之后
+        skillsInstalledListY = segGroup.frame.origin.y + segGroup.frame.height + 8
+        skillsDiscoverListY = y
+
+        // 初始加载已安装列表（手动定位到紧凑位置）
+        skillsStatusLabel.frame.origin.y = skillsInstalledListY
+        skillsListContainer.frame.origin.y = skillsInstalledListY + 24
+        skillsListTopY = skillsInstalledListY + 24
+
         // 初始加载已安装列表
         rebuildSkillsList()
     }
@@ -176,6 +186,12 @@ extension SettingsWindowController {
     @objc func skillsSegmentChanged(_ sender: NSSegmentedControl) {
         let isDiscover = sender.selectedSegment == 1
         skillsRepoConfigView.isHidden = !isDiscover
+
+        // 动态调整列表位置：已安装模式紧凑，发现模式留出配置区空间
+        let listY = isDiscover ? skillsDiscoverListY : skillsInstalledListY
+        skillsStatusLabel.frame.origin.y = listY
+        skillsListContainer.frame.origin.y = listY + 24
+        skillsListTopY = listY + 24
 
         if isDiscover {
             updateInstallSourceView()
@@ -379,7 +395,7 @@ extension SettingsWindowController {
         default: displayItems = allItems
         }
 
-        // 列表组
+        // 按 sourceGroup 分组显示
         if displayItems.isEmpty {
             let empty = NSTextField(frame: NSRect(x: 16, y: y + 4, width: listW - 32, height: 24))
             empty.isEditable = false; empty.isBordered = false; empty.backgroundColor = .clear
@@ -390,38 +406,59 @@ extension SettingsWindowController {
             listContainer.addSubview(empty)
             y += 32
         } else {
-            let rows = displayItems.enumerated().map { (idx, item) -> SettingsRowView in
-                let btn = NSButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
-                btn.bezelStyle = .rounded
-                btn.font = NSFont.systemFont(ofSize: 11)
-                btn.tag = idx
+            // 按 sourceGroup 分组
+            var grouped: [(group: String, url: String?, items: [SkillItem])] = []
+            for item in displayItems {
+                let g = item.sourceGroup ?? "其他"
+                if let idx = grouped.firstIndex(where: { $0.group == g }) {
+                    grouped[idx].items.append(item)
+                } else {
+                    grouped.append((group: g, url: item.sourceURL, items: [item]))
+                }
+            }
 
-                // Agent 徽章：在描述后追加 agent 图标
-                let agents = SkillsManager.shared.detectAgents(for: item)
-                var subtitle = item.description.isEmpty ? "" : String(item.description.prefix(60))
-                if !agents.isEmpty {
-                    let badges = agents.compactMap { id -> String? in
-                        SkillsManager.knownAgents.first(where: { $0.id == id })?.icon
-                    }.joined()
-                    if !subtitle.isEmpty { subtitle += "  " }
-                    subtitle += badges
+            // 构建每个组的 tag offset 映射
+            var globalIdx = 0
+            for group in grouped {
+                let rows = group.items.enumerated().map { (idx, item) -> SettingsRowView in
+                    let btn = NSButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
+                    btn.bezelStyle = .rounded
+                    btn.font = NSFont.systemFont(ofSize: 11)
+                    btn.tag = globalIdx + idx
+
+                    // Agent 徽章 + 来源
+                    let agents = SkillsManager.shared.detectAgents(for: item)
+                    var subtitle = item.description.isEmpty ? "" : String(item.description.prefix(50))
+                    if !agents.isEmpty {
+                        let badges = agents.compactMap { id -> String? in
+                            SkillsManager.knownAgents.first(where: { $0.id == id })?.icon
+                        }.joined()
+                        if !subtitle.isEmpty { subtitle += "  " }
+                        subtitle += badges
+                    }
+
+                    let displayName = item.type == .command ? "/\(item.name)" : item.name
+                    return SettingsRowView(
+                        title: displayName,
+                        subtitle: subtitle.isEmpty ? nil : subtitle,
+                        accessory: btn,
+                        isFirst: idx == 0,
+                        isLast: idx == group.items.count - 1
+                    )
                 }
 
-                let displayName = item.type == .command ? "/\(item.name)" : item.name
-                return SettingsRowView(
-                    title: displayName,
-                    subtitle: subtitle.isEmpty ? nil : subtitle,
-                    accessory: btn,
-                    isFirst: idx == 0,
-                    isLast: idx == displayItems.count - 1
-                )
+                // 组标题：名称 (数量) + 来源链接
+                var header = "\(group.group) (\(group.items.count))"
+                if let url = group.url, !url.isEmpty {
+                    header += "  \(url)"
+                }
+                let groupView = SettingsGroupView(header: header, rows: rows)
+                groupView.frame.origin = NSPoint(x: 0, y: y)
+                groupView.autoresizingMask = .width
+                listContainer.addSubview(groupView)
+                y += groupView.frame.height + 8
+                globalIdx += group.items.count
             }
-            let header = filterIdx == 0 ? "已安装 (\(displayItems.count))" : (filterIdx == 1 ? "技能 (\(displayItems.count))" : "命令 (\(displayItems.count))")
-            let group = SettingsGroupView(header: header, rows: rows)
-            group.frame.origin = NSPoint(x: 0, y: y)
-            group.autoresizingMask = .width
-            listContainer.addSubview(group)
-            y += group.frame.height + 8
         }
 
         skillsStatusLabel.stringValue = "已安装 \(allItems.count) 个（技能 \(skills.count)，命令 \(commands.count)）"
@@ -545,6 +582,7 @@ extension SettingsWindowController {
         case 2: displayItems = allItems.filter { $0.type == .command }
         default: displayItems = allItems
         }
+        // tag 是扁平化后的全局索引（与分组显示一致）
         let idx = sender.tag
         guard idx < displayItems.count else { return }
         let item = displayItems[idx]

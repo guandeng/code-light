@@ -815,6 +815,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var skillsPathField: NSTextField!
     var skillsListTopY: CGFloat = 0
     var skillsContainerHeight: CGFloat = 0
+    var skillsInstalledListY: CGFloat = 0
+    var skillsDiscoverListY: CGFloat = 0
     var skillsRemoteItems: [SkillItem] = []
     var skillsRemoteContents: [String: String] = [:]
     var installedFilterSegment: NSSegmentedControl!
