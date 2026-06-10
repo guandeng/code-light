@@ -971,7 +971,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         // 🧩 技能选项卡
         let skillsDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: 900))
         buildSkillsTab(skillsDoc, c)
-        let skillsMaxY = skillsDoc.subviews.reduce(CGFloat(0)) { max($0, $1.frame.origin.y + $1.frame.height) }
+        let skillsMaxY = skillsDoc.subviews.filter { !$0.isHidden }.reduce(CGFloat(0)) { max($0, $1.frame.origin.y + $1.frame.height) }
         skillsDoc.frame.size.height = max(skillsMaxY + 20, mainH)
         let skillsScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         skillsScroll.documentView = skillsDoc
