@@ -890,3 +890,93 @@ class SkillsGitHubClient {
         lastFetchTime = nil
     }
 }
+
+// MARK: - PresetManager (技能预设管理)
+
+struct SkillPreset: Codable {
+    var name: String
+    var skillNames: [String]   // 技能/命令名称列表
+    var agents: [String]       // 目标 agent id 列表
+}
+
+class PresetManager {
+    static let shared = PresetManager()
+    private let fm = FileManager.default
+    private(set) var presets: [SkillPreset] = []
+
+    private var presetsPath: String { NSHomeDirectory() + "/.codelight/presets.json" }
+
+    private init() { load() }
+
+    func load() {
+        guard let data = fm.contents(atPath: presetsPath),
+              let decoded = try? JSONDecoder().decode([SkillPreset].self, from: data) else { return }
+        presets = decoded
+    }
+
+    func save() {
+        let dir = (presetsPath as NSString).deletingLastPathComponent
+        try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        guard let data = try? JSONEncoder().encode(presets) else { return }
+        fm.createFile(atPath: presetsPath, contents: data)
+    }
+
+    func addPreset(_ preset: SkillPreset) {
+        presets.append(preset)
+        save()
+    }
+
+    func removePreset(at index: Int) {
+        guard index >= 0, index < presets.count else { return }
+        presets.remove(at: index)
+        save()
+    }
+
+    func updatePreset(at index: Int, _ preset: SkillPreset) {
+        guard index >= 0, index < presets.count else { return }
+        presets[index] = preset
+        save()
+    }
+
+    /// 激活预设：将技能同步到指定 agents
+    func activatePreset(at index: Int) -> (activated: Int, failed: Int) {
+        guard index >= 0, index < presets.count else { return (0, 0) }
+        let preset = presets[index]
+        let allItems = SkillsManager.shared.scanAll()
+        var activated = 0
+        var failed = 0
+
+        for skillName in preset.skillNames {
+            guard let item = allItems.first(where: { $0.name == skillName }) else { continue }
+            for agentId in preset.agents {
+                if SkillsManager.shared.syncToAgent(item: item, agentId: agentId) {
+                    activated += 1
+                } else {
+                    failed += 1
+                }
+            }
+        }
+        return (activated, failed)
+    }
+
+    /// 停用预设：从指定 agents 移除技能
+    func deactivatePreset(at index: Int) -> (removed: Int, failed: Int) {
+        guard index >= 0, index < presets.count else { return (0, 0) }
+        let preset = presets[index]
+        let allItems = SkillsManager.shared.scanAll()
+        var removed = 0
+        var failed = 0
+
+        for skillName in preset.skillNames {
+            guard let item = allItems.first(where: { $0.name == skillName }) else { continue }
+            for agentId in preset.agents {
+                if SkillsManager.shared.removeFromAgent(item: item, agentId: agentId) {
+                    removed += 1
+                } else {
+                    failed += 1
+                }
+            }
+        }
+        return (removed, failed)
+    }
+}

@@ -419,6 +419,90 @@ extension SettingsWindowController {
         rebuildSkillsList()
     }
 
+    // MARK: - Preset Actions
+
+    @objc func skillsCreatePreset(_ sender: NSButton) {
+        // 从当前选中项创建预设
+        let allItems = SkillsManager.shared.scanAll()
+        let filterIdx = installedFilterSegment?.selectedSegment ?? 0
+        let displayItems: [SkillItem]
+        switch filterIdx {
+        case 1: displayItems = allItems.filter { $0.type == .skill }
+        case 2: displayItems = allItems.filter { $0.type == .command }
+        default: displayItems = allItems
+        }
+
+        let selectedItems = skillsSelectedIndices.isEmpty
+            ? displayItems
+            : skillsSelectedIndices.sorted().compactMap { idx -> SkillItem? in
+                idx < displayItems.count ? displayItems[idx] : nil
+            }
+
+        if selectedItems.isEmpty {
+            skillsStatusLabel.stringValue = "没有可用的技能来创建预设"
+            skillsStatusLabel.textColor = NSColor.systemRed
+            return
+        }
+
+        // 弹出输入预设名称的对话框
+        let alert = NSAlert()
+        alert.messageText = "新建预设"
+        alert.informativeText = "将 \(selectedItems.count) 个技能归入预设"
+        alert.addButton(withTitle: "创建")
+        alert.addButton(withTitle: "取消")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        input.placeholderString = "预设名称，如「前端开发」"
+        alert.accessoryView = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let name = input.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else {
+            skillsStatusLabel.stringValue = "预设名称不能为空"
+            skillsStatusLabel.textColor = NSColor.systemRed
+            return
+        }
+
+        let preset = SkillPreset(
+            name: name,
+            skillNames: selectedItems.map { $0.name },
+            agents: ["claude-code"]
+        )
+        PresetManager.shared.addPreset(preset)
+        skillsSelectedIndices.removeAll()
+        skillsStatusLabel.stringValue = "✅ 已创建预设「\(name)」（\(selectedItems.count) 个技能）"
+        skillsStatusLabel.textColor = NSColor.systemGreen
+        rebuildSkillsList()
+    }
+
+    @objc func skillsActivatePreset(_ sender: NSButton) {
+        let idx = sender.tag
+        let result = PresetManager.shared.activatePreset(at: idx)
+        let name = PresetManager.shared.presets[idx].name
+        skillsStatusLabel.stringValue = "✅ 预设「\(name)」已激活（同步 \(result.activated) 项\(result.failed > 0 ? "，失败 \(result.failed)" : "")）"
+        skillsStatusLabel.textColor = result.failed > 0 ? NSColor.systemOrange : NSColor.systemGreen
+        rebuildSkillsList()
+    }
+
+    @objc func skillsDeactivatePreset(_ sender: NSButton) {
+        let idx = sender.tag
+        let result = PresetManager.shared.deactivatePreset(at: idx)
+        let name = PresetManager.shared.presets[idx].name
+        skillsStatusLabel.stringValue = "预设「\(name)」已停用（移除 \(result.removed) 项）"
+        skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
+        rebuildSkillsList()
+    }
+
+    @objc func skillsDeletePreset(_ sender: NSButton) {
+        let idx = sender.tag
+        let name = PresetManager.shared.presets[idx].name
+        PresetManager.shared.removePreset(at: idx)
+        skillsStatusLabel.stringValue = "已删除预设「\(name)」"
+        skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
+        rebuildSkillsList()
+    }
+
     func rebuildSkillsList() {
         guard let listContainer = skillsListContainer else { return }
         listContainer.subviews.forEach { $0.removeFromSuperview() }
@@ -460,6 +544,72 @@ extension SettingsWindowController {
         filterGroup.autoresizingMask = .width
         listContainer.addSubview(filterGroup)
         y += filterGroup.frame.height + 4
+
+        // --- 预设区域 ---
+        let presets = PresetManager.shared.presets
+        if !presets.isEmpty || !allItems.isEmpty {
+            let addPresetBtn = NSButton(frame: NSRect(x: 0, y: y, width: 120, height: 22))
+            addPresetBtn.title = "＋ 新建预设"
+            addPresetBtn.bezelStyle = .recessed
+            addPresetBtn.font = NSFont.systemFont(ofSize: 11)
+            addPresetBtn.target = self
+            addPresetBtn.action = #selector(skillsCreatePreset(_:))
+            listContainer.addSubview(addPresetBtn)
+            y += 26
+
+            // 显示已有预设
+            if !presets.isEmpty {
+                let presetRows = presets.enumerated().map { (idx, preset) -> SettingsRowView in
+                    let accView = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+
+                    let activateBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 56, height: 24))
+                    activateBtn.title = "激活"
+                    activateBtn.bezelStyle = .rounded
+                    activateBtn.font = NSFont.systemFont(ofSize: 10)
+                    activateBtn.tag = idx
+                    activateBtn.target = self
+                    activateBtn.action = #selector(skillsActivatePreset(_:))
+                    accView.addSubview(activateBtn)
+
+                    let deactBtn = NSButton(frame: NSRect(x: 60, y: 0, width: 56, height: 24))
+                    deactBtn.title = "停用"
+                    deactBtn.bezelStyle = .rounded
+                    deactBtn.font = NSFont.systemFont(ofSize: 10)
+                    deactBtn.tag = idx
+                    deactBtn.target = self
+                    deactBtn.action = #selector(skillsDeactivatePreset(_:))
+                    accView.addSubview(deactBtn)
+
+                    let delBtn = NSButton(frame: NSRect(x: 120, y: 0, width: 40, height: 24))
+                    delBtn.title = "删除"
+                    delBtn.bezelStyle = .rounded
+                    delBtn.font = NSFont.systemFont(ofSize: 10)
+                    delBtn.contentTintColor = NSColor.systemRed
+                    delBtn.tag = idx
+                    delBtn.target = self
+                    delBtn.action = #selector(skillsDeletePreset(_:))
+                    accView.addSubview(delBtn)
+
+                    let agentIcons = preset.agents.compactMap { id -> String? in
+                        SkillsManager.knownAgents.first(where: { $0.id == id })?.icon
+                    }.joined()
+                    let subtitle = "\(preset.skillNames.count) 个技能  \(agentIcons)"
+
+                    return SettingsRowView(
+                        title: "📦 \(preset.name)",
+                        subtitle: subtitle,
+                        accessory: accView,
+                        isFirst: idx == 0,
+                        isLast: idx == presets.count - 1
+                    )
+                }
+                let presetGroup = SettingsGroupView(header: "预设 (\(presets.count))", rows: presetRows)
+                presetGroup.frame.origin = NSPoint(x: 0, y: y)
+                presetGroup.autoresizingMask = .width
+                listContainer.addSubview(presetGroup)
+                y += presetGroup.frame.height + 8
+            }
+        }
 
         let filterIdx = installedFilterSegment.selectedSegment
         var displayItems: [SkillItem]
