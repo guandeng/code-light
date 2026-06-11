@@ -183,6 +183,8 @@ struct AppConfig {
             "webdavAutoSync": webdavAutoSync,
             "skillsRepoURL": skillsRepoURL,
             "skillsCatalogPath": skillsCatalogPath,
+            "allowRules": AlwaysAllowManager.shared.rules,
+            "denyRules": BlacklistManager.shared.rules,
         ]
     }
 
@@ -208,6 +210,13 @@ struct AppConfig {
         if let v = dict["webdavAutoSync"] as? Bool { webdavAutoSync = v }
         if let v = dict["skillsRepoURL"] as? String { skillsRepoURL = v }
         if let v = dict["skillsCatalogPath"] as? String { skillsCatalogPath = v }
+        // 同步规则：覆盖本地规则文件
+        if let allows = dict["allowRules"] as? [String] {
+            AlwaysAllowManager.shared.replaceRules(allows)
+        }
+        if let denies = dict["denyRules"] as? [String] {
+            BlacklistManager.shared.replaceRules(denies)
+        }
         horizontal = (displayMode == "horizontal")
     }
 }
@@ -283,8 +292,99 @@ class AlwaysAllowManager {
         if !fm.fileExists(atPath: dir) {
             try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
         }
-        let content = rules.map { "allow \($0)" }.joined(separator: "\n") + "\n"
-        try? content.write(toFile: configPath, atomically: true, encoding: .utf8)
+        // 保留文件中的 deny 行，只替换 allow 行
+        var existingLines: [String] = []
+        if let content = try? String(contentsOfFile: configPath, encoding: .utf8) {
+            existingLines = content.components(separatedBy: .newlines)
+                .filter { !$0.hasPrefix("allow ") }
+                .filter { !$0.isEmpty }
+        }
+        let allowLines = rules.map { "allow \($0)" }
+        let allLines = existingLines + allowLines
+        try? (allLines.joined(separator: "\n") + "\n").write(toFile: configPath, atomically: true, encoding: .utf8)
+    }
+
+    func addRule(_ pattern: String) {
+        let trimmed = pattern.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !rules.contains(trimmed) else { return }
+        rules.append(trimmed)
+        saveRules()
+    }
+
+    func removeRule(at index: Int) {
+        guard index >= 0, index < rules.count else { return }
+        rules.remove(at: index)
+        saveRules()
+    }
+
+    func clearAll() {
+        rules.removeAll()
+        saveRules()
+    }
+
+    /// 云同步用：用远端规则整体覆盖本地
+    func replaceRules(_ newRules: [String]) {
+        rules = newRules.map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        saveRules()
+    }
+
+    func importDefaults() {
+        let defaults = ["git", "ls", "cat", "head", "tail", "find", "grep",
+                        "pwd", "echo", "which", "whoami", "date", "df", "du",
+                        "ps", "wc", "sort", "uniq", "diff", "file", "stat",
+                        "curl", "wget", "tree", "gh"]
+        for rule in defaults where !rules.contains(rule) { rules.append(rule) }
+        saveRules()
+    }
+
+    /// 前缀匹配：git → git status, git log, git commit 等
+    func shouldAllow(command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespaces)
+        for rule in rules {
+            if trimmed == rule || trimmed.hasPrefix(rule + " ") { return true }
+        }
+        return false
+    }
+}
+
+// ============================================================
+// BlacklistManager — 危险命令黑名单（~/.codelight/config deny 行）
+// ============================================================
+
+class BlacklistManager {
+    static let shared = BlacklistManager()
+    private(set) var rules: [String] = []
+
+    private var configPath: String { NSHomeDirectory() + "/.codelight/config" }
+
+    private init() { loadRules() }
+
+    func loadRules() {
+        guard let content = try? String(contentsOfFile: configPath, encoding: .utf8) else { return }
+        rules = content.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("deny ") }
+            .map { String($0.dropFirst(5)).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    func saveRules() {
+        let dir = (configPath as NSString).deletingLastPathComponent
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: dir) {
+            try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        }
+        // 保留文件中的 allow 行，只替换 deny 行
+        var existingLines: [String] = []
+        if let content = try? String(contentsOfFile: configPath, encoding: .utf8) {
+            existingLines = content.components(separatedBy: .newlines)
+                .filter { !$0.hasPrefix("deny ") }
+                .filter { !$0.isEmpty }
+        }
+        let denyLines = rules.map { "deny \($0)" }
+        let allLines = existingLines + denyLines
+        try? (allLines.joined(separator: "\n") + "\n").write(toFile: configPath, atomically: true, encoding: .utf8)
     }
 
     func addRule(_ pattern: String) {
@@ -306,16 +406,22 @@ class AlwaysAllowManager {
     }
 
     func importDefaults() {
-        let defaults = ["git", "ls", "cat", "head", "tail", "find", "grep",
-                        "pwd", "echo", "which", "whoami", "date", "df", "du",
-                        "ps", "wc", "sort", "uniq", "diff", "file", "stat",
-                        "curl", "wget", "tree", "gh"]
+        let defaults = ["rm", "rmdir", "sudo", "chmod", "chown", "mkfs",
+                        "dd", "shutdown", "reboot", "kill", "pkill",
+                        "killall", "format"]
         for rule in defaults where !rules.contains(rule) { rules.append(rule) }
         saveRules()
     }
 
-    /// 前缀匹配：git → git status, git log, git commit 等
-    func shouldAllow(command: String) -> Bool {
+    /// 云同步用：用远端规则整体覆盖本地
+    func replaceRules(_ newRules: [String]) {
+        rules = newRules.map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        saveRules()
+    }
+
+    /// 前缀匹配：rm → rm -rf, rm -r /tmp 等
+    func shouldDeny(command: String) -> Bool {
         let trimmed = command.trimmingCharacters(in: .whitespaces)
         for rule in rules {
             if trimmed == rule || trimmed.hasPrefix(rule + " ") { return true }

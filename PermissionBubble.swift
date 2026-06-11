@@ -77,7 +77,10 @@ extension AppDelegate {
 
         // 权限模式判断：always / rules / popup
         let mode = config.permissionMode
-        if mode == "always" {
+        // 黑名单优先：即使 always/rules 模式，黑名单命令也强制弹窗
+        let isDenied = BlacklistManager.shared.shouldDeny(command: command)
+
+        if mode == "always" && !isDenied {
             // 总是运行：直接放行
             if let ls = lightServer {
                 ls.setPermissionDecision(id: id, behavior: "allow")
@@ -86,7 +89,7 @@ extension AppDelegate {
             return
         }
 
-        if mode == "rules" {
+        if mode == "rules" && !isDenied {
             // 规则运行：匹配规则则放行，否则弹窗
             if AlwaysAllowManager.shared.shouldAllow(command: command) {
                 if let ls = lightServer {
@@ -96,6 +99,10 @@ extension AppDelegate {
                 return
             }
             // 不匹配规则，继续弹窗确认
+        }
+
+        if isDenied {
+            log("[权限] 黑名单命令，强制弹窗: \(String(command.prefix(80)))")
         }
 
         // popup 模式或 rules 未匹配：弹窗确认

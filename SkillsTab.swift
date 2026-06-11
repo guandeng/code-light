@@ -726,16 +726,9 @@ extension SettingsWindowController {
                     btn.font = NSFont.systemFont(ofSize: 11)
                     btn.tag = itemIdx
 
-                    // checkbox 选中状态
-                    let checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(skillsToggleSelect(_:)))
-                    checkbox.setButtonType(.switch)
-                    checkbox.state = skillsSelectedIndices.contains(itemIdx) ? .on : .off
-                    checkbox.tag = itemIdx
-                    // 将 checkbox 和卸载按钮放在 accessory 容器中
+                    // 卸载按钮放在 accessory 容器中
                     let accView = NSView(frame: NSRect(x: 0, y: 0, width: 140, height: 24))
-                    checkbox.frame = NSRect(x: 0, y: 0, width: 20, height: 24)
-                    btn.frame = NSRect(x: 24, y: 0, width: 60, height: 24)
-                    accView.addSubview(checkbox)
+                    btn.frame = NSRect(x: 0, y: 0, width: 60, height: 24)
                     accView.addSubview(btn)
 
                     // Agent 徽章 + 来源
@@ -1027,6 +1020,13 @@ extension SettingsWindowController {
               let identifier = row.identifier?.rawValue,
               identifier.hasPrefix("skill-"),
               let idx = Int(identifier.replacingOccurrences(of: "skill-", with: "")) else { return }
+
+        // 忽略点击在 accessory 区域（checkbox/卸载按钮）的事件，防止误触预览弹窗
+        if let accView = row.accessoryView {
+            let clickPoint = sender.location(in: row)
+            let accFrame = accView.convert(accView.bounds, to: row)
+            if accFrame.contains(clickPoint) { return }
+        }
         let allItems = SkillsManager.shared.scanAll()
         let filterIdx = installedFilterSegment?.selectedSegment ?? 0
         let displayItems: [SkillItem]

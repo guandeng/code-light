@@ -7,12 +7,23 @@ import Cocoa
 extension SettingsWindowController {
 
     func generateHooks(tool: String, port: String) -> [String: Any] {
-        let toolName = tool == "claude" ? "$CLAUDE_TOOL_NAME" : (tool == "cursor" ? "$CURSOR_TOOL_NAME" : "")
-        let sessionId = tool == "claude" ? "$CLAUDE_SESSION_ID" : (tool == "cursor" ? "$CURSOR_SESSION_ID" : "codex")
+        // 从 stdin JSON 提取 tool_name 和 session_id 的内联脚本
+        let readStdin = "INPUT=$(cat); TOOL=$(echo \"$INPUT\" | python3 -c \"import sys,json;d=json.load(sys.stdin);print(d.get('tool_name',''))\" 2>/dev/null); SID=$(echo \"$INPUT\" | python3 -c \"import sys,json;d=json.load(sys.stdin);print(d.get('session_id',''))\" 2>/dev/null)"
+
+        // PreToolUse: stdin 有 tool_name + session_id
+        let preCmd = "\(readStdin); curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d \"{\\\"state\\\": \\\"working\\\", \\\"message\\\": \\\"executing $TOOL\\\", \\\"session_id\\\": \\\"$SID\\\"}\" || echo '{}'"
+        // PostToolUse: 状态更新 + worklog 记录
+        let postStateCmd = "\(readStdin); curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d \"{\\\"state\\\": \\\"thinking\\\", \\\"message\\\": \\\"analyzing\\\", \\\"session_id\\\": \\\"$SID\\\"}\" || echo '{}'"
+        let worklogCmd = "\(readStdin); curl -s -X POST http://127.0.0.1:\(port)/api/worklog -H 'Content-Type: application/json' -d \"{\\\"tool_name\\\": \\\"$TOOL\\\", \\\"session_id\\\": \\\"$SID\\\"}\" || true"
+        // Stop: 用环境变量 CLAUDE_CODE_SESSION_ID（Stop hook stdin 无 tool_name）
+        let sidEnv = tool == "claude" ? "$CLAUDE_CODE_SESSION_ID" : (tool == "cursor" ? "$CURSOR_SESSION_ID" : "codex")
+        let stopCmd = "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d \"{\\\"state\\\": \\\"idle\\\", \\\"message\\\": \\\"done\\\", \\\"session_id\\\": \\\"\(sidEnv)\\\"}\" || echo '{}'"
+        let summaryCmd = "LINES=$(git diff --stat HEAD 2>/dev/null | tail -1); if [ -n \"$LINES\" ]; then curl -s -X POST http://127.0.0.1:\(port)/api/worklog -H 'Content-Type: application/json' -d \"{\\\"tool_name\\\": \\\"stop\\\", \\\"session_id\\\": \\\"\(sidEnv)\\\", \\\"detail\\\": \\\"改动: $LINES\\\"}\" || true; fi"
+
         var hooks: [String: Any] = [
-            "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"working\", \"message\": \"executing \(toolName)\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
-            "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"thinking\", \"message\": \"analyzing\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
-            "Stop": [["matcher": "", "hooks": [["type": "command", "command": "curl -s -X POST http://127.0.0.1:\(port)/api/state -H 'Content-Type: application/json' -d '{\"state\": \"idle\", \"message\": \"done\", \"session_id\": \"\(sessionId)\"}' || echo '{}'"]]]],
+            "PreToolUse": [["matcher": "", "hooks": [["type": "command", "command": preCmd]]]],
+            "PostToolUse": [["matcher": "", "hooks": [["type": "command", "command": "\(postStateCmd); \(worklogCmd)"]]]],
+            "Stop": [["matcher": "", "hooks": [["type": "command", "command": "\(stopCmd); \(summaryCmd)"]]]],
         ]
         if appDelegate.config.notifyOnPermission {
             let permCmd = "curl -s -X POST http://127.0.0.1:\(port)/api/permission -d \"$(cat)\" -H 'Content-Type: application/json' | python3 -c \"import sys,json,urllib.request,time;rid=json.load(sys.stdin).get('id','');n=0\nwhile n<100:\n try:r2=json.loads(urllib.request.urlopen(f'http://127.0.0.1:\(port)/api/permission/'+rid+'/decision').read())\n except:break\n if r2.get('status')=='done':b=r2.get('decision',{}).get('decision','');print(json.dumps({'hookSpecificOutput':{'hookEventName':'PermissionRequest','decision':{'behavior':b}}}));break\n time.sleep(0.3);n+=1\" || true"

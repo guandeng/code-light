@@ -2,7 +2,7 @@ VERSION ?= 1.0.0
 APP_NAME = CodeLight
 APP_BUNDLE = $(APP_NAME).app
 ZIP_FILE = $(APP_NAME)-v$(VERSION).zip
-SWIFT_SRC = main.swift Config.swift HotkeyManager.swift Weather.swift UI.swift CodeLight.swift PermissionBubble.swift HookConfig.swift MenuBuilder.swift LightWindowBuilder.swift LightAnimator.swift WebDAVSync.swift S3Sync.swift SettingsUI.swift SkillsManager.swift SkillsTab.swift
+SWIFT_SRC = main.swift Config.swift HotkeyManager.swift Weather.swift UI.swift CodeLight.swift PermissionBubble.swift HookConfig.swift MenuBuilder.swift LightWindowBuilder.swift LightAnimator.swift WebDAVSync.swift S3Sync.swift SettingsUI.swift SkillsManager.swift SkillsTab.swift Database.swift
 CLI_SRC = codelight-cli.swift
 SERVER_SRC = light-server.py
 BINARY = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
@@ -13,16 +13,18 @@ SPARKLE_FRAMEWORK = Frameworks/Sparkle.framework
 .PHONY: build cli clean package release test test-unit test-integration
 
 build: ## 编译 Universal Binary (arm64 + x86_64)
-	swiftc -O -target arm64-apple-macosx13.0 \
+	swiftc -O -target arm64-apple-macosx13.0 -import-objc-header SQLiteBridge.h \
 		-F Frameworks \
 		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
 		-framework Sparkle \
+		-lsqlite3 \
 		-Xlinker -rpath -Xlinker @loader_path/../Frameworks \
 		-o $(BINARY)-arm64 $(SWIFT_SRC)
-	swiftc -O -target x86_64-apple-macosx13.0 \
+	swiftc -O -target x86_64-apple-macosx13.0 -import-objc-header SQLiteBridge.h \
 		-F Frameworks \
 		-framework Cocoa -framework CoreLocation -framework Foundation -framework ServiceManagement -framework UserNotifications \
 		-framework Sparkle \
+		-lsqlite3 \
 		-Xlinker -rpath -Xlinker @loader_path/../Frameworks \
 		-o $(BINARY)-x86_64 $(SWIFT_SRC)
 	lipo -create -output $(BINARY) $(BINARY)-arm64 $(BINARY)-x86_64

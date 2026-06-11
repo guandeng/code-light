@@ -72,9 +72,14 @@ class LightServer {
     }
 
     func iterateHistory(_ block: (Double, String, String, String) -> Void) {
-        for h in history {
-            block(h.timestamp, h.state, h.message, h.session_id)
+        // 优先从 SQLite 读取
+        let events = Database.shared.queryEvents(limit: 2000)
+        if !events.isEmpty {
+            for e in events { block(e.timestamp, e.state, e.message, e.sessionId) }
+            return
         }
+        // 降级到内存
+        for h in history { block(h.timestamp, h.state, h.message, h.session_id) }
     }
 
     private func handleConnection(_ conn: NWConnection) {
@@ -128,6 +133,10 @@ class LightServer {
             return .init(status: 200, body: jsonEncodeHistory())
         case "POST /api/state":
             return handlePostState(body: body)
+        case "GET /api/worklog":
+            return handleGetWorklog()
+        case "POST /api/worklog":
+            return handlePostWorklog(body: body)
         default:
             if method == "DELETE", path.hasPrefix("/api/session/") {
                 let sid = String(path.dropFirst("/api/session/".count))
@@ -163,6 +172,7 @@ class LightServer {
         if history.count > maxHistory { history.removeFirst(history.count - maxHistory) }
         onLog?("[状态] [\(sid.prefix(8))] \(name) — \(message)")
         StatsManager.shared.record(state: name, message: message, sessionId: sid)
+        Database.shared.insertEvent(state: name, message: message, sessionId: String(sid.prefix(8)), toolName: message.hasPrefix("executing ") ? String(message.dropFirst(10)) : "")
         // 状态离开 waiting 时自动关闭权限气泡（用户可能在编辑器里已处理）
         if name != "waiting" {
             onStateLeaveWaiting?()
@@ -183,6 +193,27 @@ class LightServer {
         }
         updateState(name: state, message: message, sessionId: sessionId)
         return .init(status: 200, body: jsonEncode(dictAggregateState()))
+    }
+
+    private func handleGetWorklog() -> RouteResult {
+        let entries = Database.shared.queryWorklog(limit: 500)
+        let arr: [[String: Any]] = entries.map { e in
+            ["timestamp": e.timestamp, "tool_name": e.toolName, "session_id": e.sessionId, "detail": e.detail] as [String: Any]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: arr, options: [.sortedKeys]) else { return .init(status: 200, body: "[]") }
+        return .init(status: 200, body: String(data: data, encoding: .utf8) ?? "[]")
+    }
+
+    private func handlePostWorklog(body: String?) -> RouteResult {
+        guard let body = body,
+              let raw = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] else {
+            return .init(status: 400, body: "{\"ok\":false,\"error\":\"invalid json\"}")
+        }
+        let toolName = raw["tool_name"] as? String ?? ""
+        let sessionId = raw["session_id"] as? String ?? ""
+        let detail = raw["detail"] as? String ?? ""
+        Database.shared.insertWorklog(toolName: toolName, sessionId: sessionId, detail: detail)
+        return .init(status: 200, body: "{\"ok\":true}")
     }
 
     private func handleDeleteSession(_ sid: String) -> RouteResult {
@@ -410,6 +441,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.log("[通知] UN权限: \(granted), err: \(String(describing: error))")
         }
         buildAppMainMenu()
+        Database.shared.open()
         startServer()
         buildMenuBar()
         buildLightWindow()
@@ -506,6 +538,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         lightServer?.stop()
+        Database.shared.close()
         log("[退出] 服务已停止")
     }
 
@@ -798,6 +831,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var permissionModeSegment: NSSegmentedControl!
     var rulesViews: [NSView] = []  // 规则区域所有子视图，仅 rules 模式可见
     var rulesCard: NSView!
+    // 危险命令黑名单（所有模式可见）
+    var blacklistRulesList: NSView!
+    var addBlacklistField: NSTextField!
+    var blacklistCard: NSView!
     // Sidebar navigation
     var sidebarButtons: [NSButton] = []
     var containers: [NSView] = []
@@ -1411,14 +1448,85 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         ry += 24
 
         rulesCard.frame.size.height = ry
+        y += ry + 12
 
         // 根据 mode 控制规则区域可见性
         updateRulesSectionVisibility()
+
+        // --- 危险命令黑名单卡片（仅「总是运行」模式可见）---
+        let blCard = NSView(frame: NSRect(x: 16, y: rulesCard.frame.origin.y, width: view.bounds.width - 32, height: 0))
+        blCard.wantsLayer = true
+        blCard.layer?.cornerRadius = 10
+        blCard.layer?.masksToBounds = true
+        view.addSubview(blCard)
+        blacklistCard = blCard
+
+        var by: CGFloat = 0
+        let blTitle = NSTextField(frame: NSRect(x: 12, y: by, width: 300, height: 20))
+        blTitle.isEditable = false; blTitle.isBordered = false; blTitle.backgroundColor = .clear
+        blTitle.stringValue = "🚫 危险命令黑名单"
+        blTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        blTitle.textColor = NSColor.secondaryLabelColor
+        blCard.addSubview(blTitle); by += 24
+
+        let blDesc = NSTextField(frame: NSRect(x: 12, y: by, width: 400, height: 18))
+        blDesc.isEditable = false; blDesc.isBordered = false; blDesc.backgroundColor = .clear
+        blDesc.font = NSFont.systemFont(ofSize: 10)
+        blDesc.textColor = NSColor.systemRed
+        blDesc.stringValue = "即使「总是运行」也强制弹窗确认（前缀匹配）"
+        blCard.addSubview(blDesc); by += 28
+
+        let blListH: CGFloat = 160
+        blacklistRulesList = FlippedView(frame: NSRect(x: 0, y: 0, width: blCard.frame.width - 24, height: blListH))
+        blacklistRulesList.wantsLayer = true
+        blacklistRulesList.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        blacklistRulesList.layer?.cornerRadius = 6
+
+        let blScroll = NSScrollView(frame: NSRect(x: 12, y: by, width: blCard.frame.width - 24, height: blListH))
+        blScroll.documentView = blacklistRulesList
+        blScroll.hasVerticalScroller = false
+        blScroll.drawsBackground = false
+        blCard.addSubview(blScroll)
+        rebuildBlacklistRulesList()
+        by += blListH + 12
+
+        addBlacklistField = NSTextField(frame: NSRect(x: 12, y: by, width: blCard.frame.width - 100, height: 26))
+        addBlacklistField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        addBlacklistField.placeholderString = "输入危险命令前缀，如 rm, sudo, mkfs"
+        addBlacklistField.target = self; addBlacklistField.action = #selector(addBlacklistRule)
+        blCard.addSubview(addBlacklistField)
+
+        let blAddBtn = NSButton(frame: NSRect(x: blCard.frame.width - 80, y: by, width: 68, height: 26))
+        blAddBtn.title = "添加"; blAddBtn.bezelStyle = .rounded
+        blAddBtn.font = NSFont.systemFont(ofSize: 12)
+        blAddBtn.target = self; blAddBtn.action = #selector(addBlacklistRule)
+        blCard.addSubview(blAddBtn); by += 36
+
+        let blImportBtn = NSButton(frame: NSRect(x: 12, y: by, width: 140, height: 26))
+        blImportBtn.title = "导入默认危险命令"; blImportBtn.bezelStyle = .rounded
+        blImportBtn.font = NSFont.systemFont(ofSize: 11)
+        blImportBtn.target = self; blImportBtn.action = #selector(importDefaultBlacklist)
+        blCard.addSubview(blImportBtn)
+
+        let blClearBtn = NSButton(frame: NSRect(x: 160, y: by, width: 80, height: 26))
+        blClearBtn.title = "清空全部"; blClearBtn.bezelStyle = .rounded
+        blClearBtn.font = NSFont.systemFont(ofSize: 11)
+        blClearBtn.target = self; blClearBtn.action = #selector(clearAllBlacklist)
+        blCard.addSubview(blClearBtn); by += 36
+
+        blCard.frame.size.height = by
     }
 
     func updateRulesSectionVisibility() {
-        let hide = (appDelegate.config.permissionMode != "rules")
-        for v in rulesViews { v.isHidden = hide }
+        let mode = appDelegate.config.permissionMode
+        let hideRules = (mode != "rules")
+        let hideBlacklist = (mode != "always")
+        for v in rulesViews { v.isHidden = hideRules }
+        // 黑名单卡片只在「总是运行」模式显示，紧贴模式选择卡片下方
+        if let blCard = blacklistCard, let rulesCard = rulesCard {
+            blCard.isHidden = hideBlacklist
+            blCard.frame.origin.y = rulesCard.frame.origin.y
+        }
     }
 
     func rebuildAlwaysAllowRulesList() {
@@ -1509,6 +1617,95 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc func clearAllRules() {
         AlwaysAllowManager.shared.clearAll()
         rebuildAlwaysAllowRulesList()
+    }
+
+    // MARK: - Blacklist Actions
+
+    func rebuildBlacklistRulesList() {
+        guard let list = blacklistRulesList else { return }
+        list.subviews.forEach { $0.removeFromSuperview() }
+        BlacklistManager.shared.loadRules()
+        let rules = BlacklistManager.shared.rules
+        let listW = list.frame.width
+
+        if rules.isEmpty {
+            let empty = NSTextField(frame: NSRect(x: 12, y: 8, width: listW - 24, height: 20))
+            empty.isEditable = false; empty.isBordered = false; empty.backgroundColor = .clear
+            empty.font = NSFont.systemFont(ofSize: 11)
+            empty.textColor = NSColor.tertiaryLabelColor
+            empty.stringValue = "暂无黑名单 — 添加危险命令或导入默认"
+            list.addSubview(empty)
+            list.frame.size.height = 40
+            return
+        }
+
+        let chipFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let chipH: CGFloat = 28
+        let chipGap: CGFloat = 6
+        let padX: CGFloat = 10
+        let closeW: CGFloat = 16
+        var cx: CGFloat = 8
+        var cy: CGFloat = 8
+
+        for (i, rule) in rules.enumerated() {
+            let textW = (rule as NSString).size(withAttributes: [.font: chipFont]).width
+            let chipW = textW + padX + closeW + padX
+
+            if cx + chipW > listW - 8 {
+                cx = 8
+                cy += chipH + chipGap
+            }
+
+            let chip = NSView(frame: NSRect(x: cx, y: cy, width: chipW, height: chipH))
+            chip.wantsLayer = true
+            chip.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.12).cgColor
+            chip.layer?.cornerRadius = 6
+            chip.layer?.borderColor = NSColor.systemRed.withAlphaComponent(0.3).cgColor
+            chip.layer?.borderWidth = 0.5
+            list.addSubview(chip)
+
+            let label = NSTextField(frame: NSRect(x: padX, y: 4, width: textW + 4, height: 20))
+            label.isEditable = false; label.isBordered = false; label.backgroundColor = .clear
+            label.font = chipFont
+            label.textColor = NSColor.systemRed
+            label.stringValue = rule
+            chip.addSubview(label)
+
+            let closeBtn = NSButton(frame: NSRect(x: chipW - closeW - 4, y: (chipH - closeW) / 2, width: closeW, height: closeW))
+            closeBtn.title = "×"
+            closeBtn.isBordered = false
+            closeBtn.font = NSFont.systemFont(ofSize: 12, weight: .bold)
+            closeBtn.contentTintColor = NSColor.tertiaryLabelColor
+            closeBtn.tag = i
+            closeBtn.target = self; closeBtn.action = #selector(removeBlacklistRule(_:))
+            chip.addSubview(closeBtn)
+
+            cx += chipW + chipGap
+        }
+
+        list.frame.size.height = max(cy + chipH + 8, 40)
+    }
+
+    @objc func addBlacklistRule() {
+        guard let text = addBlacklistField?.stringValue.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return }
+        BlacklistManager.shared.addRule(text)
+        addBlacklistField.stringValue = ""
+        rebuildBlacklistRulesList()
+    }
+
+    @objc func removeBlacklistRule(_ sender: NSButton) {
+        BlacklistManager.shared.removeRule(at: sender.tag)
+        rebuildBlacklistRulesList()
+    }
+
+    @objc func importDefaultBlacklist() {
+        BlacklistManager.shared.importDefaults()
+        rebuildBlacklistRulesList()
+    }
+
+    @objc func clearAllBlacklist() {
+        BlacklistManager.shared.clearAll()
+        rebuildBlacklistRulesList()
     }
 
     @discardableResult

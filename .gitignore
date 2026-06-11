@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 .env
 *.log
+WORKLOG.md
 CodeLight.app/
 CodeLight 2.app/
 *.zip
