@@ -1,5 +1,4 @@
 import Cocoa
-import Sparkle
 
 // ============================================================
 // AppDelegate — 菜单构建扩展
@@ -55,8 +54,7 @@ extension AppDelegate {
         // —— 帮助菜单 ——
         let helpMenu = NSMenu(title: "帮助")
         helpMenu.addItem(withTitle: "\(appName) 帮助", action: #selector(openGitHub), keyEquivalent: "")
-        let checkUpdateItem = helpMenu.addItem(withTitle: "检查更新...", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
-        checkUpdateItem.target = updaterController
+        let checkUpdateItem = helpMenu.addItem(withTitle: "检查更新...", action: #selector(AppDelegate.checkForGHUpdate), keyEquivalent: "")
         let helpMenuItem = NSMenuItem(); helpMenuItem.submenu = helpMenu
         mainMenu.addItem(helpMenuItem)
         NSApp.helpMenu = helpMenu
@@ -115,8 +113,7 @@ extension AppDelegate {
         menu.addItem(withTitle: "重置窗口位置", action: #selector(resetWindowPosition), keyEquivalent: "r")
         menu.addItem(withTitle: "今日工作时间线", action: #selector(openTimeline), keyEquivalent: "l")
         menu.addItem(NSMenuItem.separator())
-        let statusCheckUpdateItem = menu.addItem(withTitle: "检查更新...", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "u")
-        statusCheckUpdateItem.target = updaterController
+        let statusCheckUpdateItem = menu.addItem(withTitle: "检查更新...", action: #selector(AppDelegate.checkForGHUpdate), keyEquivalent: "u")
         menu.addItem(withTitle: "GitHub", action: #selector(openGitHub), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "退出 CodeLight", action: #selector(quitApp), keyEquivalent: "q")

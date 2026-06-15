@@ -3,7 +3,7 @@ import CoreLocation
 import Foundation
 import Network
 import ServiceManagement
-import Sparkle
+
 import UserNotifications
 
 // ============================================================
@@ -353,8 +353,6 @@ class LightServer {
 // ============================================================
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    // Sparkle 自动更新
-    let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     var config = AppConfig.load()
     var lightWindow: NSWindow!
     var redView: RealTrafficLightView!
@@ -599,7 +597,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func menuCheckForUpdate() {
-        updaterController.checkForUpdates(nil)
+        checkForGHUpdate()
+    }
+
+    @objc func checkForGHUpdate() {
+        let currentVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        let url = URL(string: "https://api.github.com/repos/guandeng/code-light/releases/latest")!
+        let task = URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let data = data, error == nil,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let tagName = json["tag_name"] as? String else {
+                    self.showUpdateAlert(title: "检查更新", message: "无法获取最新版本信息，请检查网络连接。")
+                    return
+                }
+                let latestVer = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+                if latestVer != currentVer {
+                    self.showUpdateAlert(title: "发现新版本 v\(latestVer)", message: "当前版本 v\(currentVer)，点击确定前往下载。", download: true)
+                } else {
+                    self.showUpdateAlert(title: "已是最新版本", message: "当前版本 v\(currentVer) ✓")
+                }
+            }
+        }
+        task.resume()
+    }
+
+    private func showUpdateAlert(title: String, message: String, download: Bool = false) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: download ? "前往下载" : "好")
+        if download {
+            alert.addButton(withTitle: "取消")
+        }
+        let response = alert.runModal()
+        if download && response == .alertFirstButtonReturn {
+            if let url = URL(string: "https://github.com/guandeng/code-light/releases/latest") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     @objc func openGitHub() {
@@ -772,7 +809,7 @@ class TimelineWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-class SettingsWindowController: NSWindowController, NSWindowDelegate {
+class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureRecognizerDelegate {
     let appDelegate: AppDelegate
     var serverField: NSTextField!
     var portTestLabel: NSTextField!
@@ -865,7 +902,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     var skillsGitField: NSTextField!
     var skillsPreviewWindow: NSWindow?
     var skillsSelectedTag: String?
-    var skillsSelectedIndices: Set<Int> = []
+    var skillsSelectedIndices: Set<String> = []  // localPath 集合
     var skillsBatchBar: NSView?
     let sidebarItems = ["⚙️ 通用", "🎨 外观", "🎯 行为", "🚀 总是运行", "💡 灯效规则", "🔗 配置 Hook", "☁️ 高级", "📊 统计", "🧩 技能"]
 
@@ -1106,8 +1143,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let checkUpdateBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 80, height: 24))
         checkUpdateBtn.title = "检查更新"; checkUpdateBtn.bezelStyle = .rounded
         checkUpdateBtn.font = NSFont.systemFont(ofSize: 11)
-        checkUpdateBtn.target = appDelegate.updaterController
-        checkUpdateBtn.action = #selector(SPUStandardUpdaterController.checkForUpdates(_:))
+        checkUpdateBtn.target = appDelegate
+        checkUpdateBtn.action = #selector(AppDelegate.checkForGHUpdate)
         updateAccessory.addSubview(checkUpdateBtn)
 
         updateStatusLabel = NSTextField(frame: NSRect(x: 88, y: 4, width: 180, height: 20))
@@ -2152,7 +2189,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func checkForUpdate() {
-        appDelegate.updaterController.checkForUpdates(nil)
+        appDelegate.checkForGHUpdate()
     }
 
     // MARK: - Advanced Tab (WebDAV Sync)

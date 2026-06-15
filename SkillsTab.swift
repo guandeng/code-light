@@ -1,5 +1,9 @@
 import Cocoa
 
+private final class SkillsActionButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 // MARK: - Skills Tab (SettingsWindowController Extension)
 
 extension SettingsWindowController {
@@ -382,11 +386,11 @@ extension SettingsWindowController {
     // MARK: - Batch Operations
 
     @objc func skillsToggleSelect(_ sender: NSButton) {
-        let idx = sender.tag
+        let path = sender.identifier?.rawValue ?? ""
         if sender.state == .on {
-            skillsSelectedIndices.insert(idx)
+            skillsSelectedIndices.insert(path)
         } else {
-            skillsSelectedIndices.remove(idx)
+            skillsSelectedIndices.remove(path)
         }
         // 不完全重建，只刷新批量操作栏
         rebuildSkillsList()
@@ -394,19 +398,12 @@ extension SettingsWindowController {
 
     @objc func skillsBatchUninstall(_ sender: NSButton) {
         let allItems = SkillsManager.shared.scanAll()
-        let filterIdx = installedFilterSegment?.selectedSegment ?? 0
-        let displayItems: [SkillItem]
-        switch filterIdx {
-        case 1: displayItems = allItems.filter { $0.type == .skill }
-        case 2: displayItems = allItems.filter { $0.type == .command }
-        default: displayItems = allItems
-        }
 
         var success = 0
         var failed = 0
-        for idx in skillsSelectedIndices.sorted().reversed() {
-            guard idx < displayItems.count else { continue }
-            if SkillsManager.shared.uninstall(displayItems[idx]) {
+        for path in skillsSelectedIndices {
+            guard let item = allItems.first(where: { $0.localPath == path }) else { continue }
+            if SkillsManager.shared.uninstall(item) {
                 success += 1
             } else {
                 failed += 1
@@ -438,8 +435,8 @@ extension SettingsWindowController {
 
         let selectedItems = skillsSelectedIndices.isEmpty
             ? displayItems
-            : skillsSelectedIndices.sorted().compactMap { idx -> SkillItem? in
-                idx < displayItems.count ? displayItems[idx] : nil
+            : skillsSelectedIndices.compactMap { path -> SkillItem? in
+                displayItems.first(where: { $0.localPath == path })
             }
 
         if selectedItems.isEmpty {
@@ -716,15 +713,14 @@ extension SettingsWindowController {
                 }
             }
 
-            // 构建每个组的 tag offset 映射
-            var globalIdx = 0
+            // 按当前分组构建展示行，操作定位统一使用 localPath。
             for group in grouped {
                 let rows = group.items.enumerated().map { (idx, item) -> SettingsRowView in
-                    let itemIdx = globalIdx + idx
-                    let btn = NSButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
+                    let localPath = item.localPath ?? ""
+                    let btn = SkillsActionButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
                     btn.bezelStyle = .rounded
                     btn.font = NSFont.systemFont(ofSize: 11)
-                    btn.tag = itemIdx
+                    btn.identifier = NSUserInterfaceItemIdentifier(localPath)
 
                     // 卸载按钮放在 accessory 容器中
                     let accView = NSView(frame: NSRect(x: 0, y: 0, width: 140, height: 24))
@@ -752,8 +748,10 @@ extension SettingsWindowController {
                     )
                     // 点击行预览 SKILL.md
                     let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(skillsPreviewClicked(_:)))
+                    clickGesture.delaysPrimaryMouseButtonEvents = false
+                    clickGesture.delegate = self
                     row.addGestureRecognizer(clickGesture)
-                    row.identifier = NSUserInterfaceItemIdentifier("skill-\(itemIdx)")
+                    row.identifier = NSUserInterfaceItemIdentifier("skill:\(localPath)")
                     return row
                 }
 
@@ -767,7 +765,6 @@ extension SettingsWindowController {
                 groupView.autoresizingMask = .width
                 listContainer.addSubview(groupView)
                 y += groupView.frame.height + 4
-                globalIdx += group.items.count
             }
         }
 
@@ -804,10 +801,10 @@ extension SettingsWindowController {
             let isInstalled = localNames.contains(item.name.lowercased())
             let btn: NSButton
             if isInstalled {
-                btn = NSButton(title: "已安装", target: nil, action: nil)
+                btn = SkillsActionButton(title: "已安装", target: nil, action: nil)
                 btn.isEnabled = false
             } else {
-                btn = NSButton(title: "安装", target: self, action: #selector(skillsInstallItem(_:)))
+                btn = SkillsActionButton(title: "安装", target: self, action: #selector(skillsInstallItem(_:)))
                 btn.tag = idx
             }
             btn.bezelStyle = .rounded
@@ -885,17 +882,17 @@ extension SettingsWindowController {
 
     @objc func skillsUninstallItem(_ sender: NSButton) {
         let allItems = SkillsManager.shared.scanAll()
-        let filterIdx = installedFilterSegment?.selectedSegment ?? 0
-        let displayItems: [SkillItem]
-        switch filterIdx {
-        case 1: displayItems = allItems.filter { $0.type == .skill }
-        case 2: displayItems = allItems.filter { $0.type == .command }
-        default: displayItems = allItems
+        let path = sender.identifier?.rawValue ?? ""
+        guard !path.isEmpty else {
+            skillsStatusLabel.stringValue = "卸载失败：未找到技能路径"
+            skillsStatusLabel.textColor = NSColor.systemRed
+            return
         }
-        // tag 是扁平化后的全局索引（与分组显示一致）
-        let idx = sender.tag
-        guard idx < displayItems.count else { return }
-        let item = displayItems[idx]
+        guard let item = allItems.first(where: { $0.localPath == path }) else {
+            skillsStatusLabel.stringValue = "卸载失败：技能已不存在，请刷新列表"
+            skillsStatusLabel.textColor = NSColor.systemOrange
+            return
+        }
 
         if SkillsManager.shared.uninstall(item) {
             // 更新远程列表的安装状态
@@ -1018,26 +1015,40 @@ extension SettingsWindowController {
     @objc func skillsPreviewClicked(_ sender: NSClickGestureRecognizer) {
         guard let row = sender.view as? SettingsRowView,
               let identifier = row.identifier?.rawValue,
-              identifier.hasPrefix("skill-"),
-              let idx = Int(identifier.replacingOccurrences(of: "skill-", with: "")) else { return }
+              identifier.hasPrefix("skill:") else { return }
 
         // 忽略点击在 accessory 区域（checkbox/卸载按钮）的事件，防止误触预览弹窗
-        if let accView = row.accessoryView {
-            let clickPoint = sender.location(in: row)
-            let accFrame = accView.convert(accView.bounds, to: row)
-            if accFrame.contains(clickPoint) { return }
-        }
+        let clickPoint = sender.location(in: row)
+        if isSkillsControlClick(in: row, at: clickPoint) { return }
+        let path = String(identifier.dropFirst("skill:".count))
         let allItems = SkillsManager.shared.scanAll()
-        let filterIdx = installedFilterSegment?.selectedSegment ?? 0
-        let displayItems: [SkillItem]
-        switch filterIdx {
-        case 1: displayItems = allItems.filter { $0.type == .skill }
-        case 2: displayItems = allItems.filter { $0.type == .command }
-        default: displayItems = allItems
-        }
-        guard idx < displayItems.count else { return }
-        let item = displayItems[idx]
+        guard let item = allItems.first(where: { $0.localPath == path }) else { return }
         showSkillPreview(item)
+    }
+
+    private func isSkillsControlClick(in row: SettingsRowView, at point: NSPoint) -> Bool {
+        if let accView = row.accessoryView {
+            let accFrame = accView.convert(accView.bounds, to: row)
+            if accFrame.contains(point) { return true }
+        }
+
+        guard let hitView = row.hitTest(point) else { return false }
+        var current: NSView? = hitView
+        while let view = current, view !== row {
+            if view is NSControl { return true }
+            current = view.superview
+        }
+        return false
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        guard let row = gestureRecognizer.view as? SettingsRowView,
+              row.identifier?.rawValue.hasPrefix("skill:") == true else {
+            return true
+        }
+
+        let point = row.convert(event.locationInWindow, from: nil)
+        return !isSkillsControlClick(in: row, at: point)
     }
 
     private func showSkillPreview(_ item: SkillItem) {
