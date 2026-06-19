@@ -62,10 +62,67 @@ class Database {
             );
             CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp);
             CREATE INDEX IF NOT EXISTS idx_worklog_ts ON worklog(timestamp);
+            CREATE TABLE IF NOT EXISTS secrets (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            );
         """
         sqlite3_exec(db, createSQL, nil, nil, nil)
+        // 收紧 db 文件权限：仅属主可读写（默认 -rw-r--r-- 过宽）
+        chmod(dbPath, 0o600)
         cleanupEvents(days: 30)
         cleanupWorklog(days: 90)
+    }
+
+    // MARK: - Secrets（凭据存储：WebDAV 密码、S3 AK/SK 等）
+    // 注意：SQLite 明文存储，文件权限 600。同账户其他进程仍可读，非绝对安全。
+
+    /// 确保 db 已打开（懒打开，供 Config.load 早期调用）
+    private func ensureOpen() {
+        if db == nil { open() }
+    }
+
+    func setSecret(_ key: String, _ value: String) {
+        ensureOpen()
+        guard let db = db else { return }
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO secrets (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+    }
+
+    func getSecret(_ key: String) -> String? {
+        ensureOpen()
+        guard let db = db else { return nil }
+        var stmt: OpaquePointer?
+        var result: String?
+        let sql = "SELECT value FROM secrets WHERE key=?"
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                if let cstr = sqlite3_column_text(stmt, 0) {
+                    result = String(cString: cstr)
+                }
+            }
+        }
+        sqlite3_finalize(stmt)
+        return result
+    }
+
+    func deleteSecret(_ key: String) {
+        ensureOpen()
+        guard let db = db else { return }
+        var stmt: OpaquePointer?
+        let sql = "DELETE FROM secrets WHERE key=?"
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
     }
 
     func close() {

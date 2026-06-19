@@ -809,7 +809,7 @@ class TimelineWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureRecognizerDelegate {
+class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureRecognizerDelegate, NSTextFieldDelegate {
     let appDelegate: AppDelegate
     var serverField: NSTextField!
     var portTestLabel: NSTextField!
@@ -835,8 +835,10 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
     var webdavUserField: NSTextField!
     var webdavPassField: NSSecureTextField!
     var webdavPathField: NSTextField!
+    var webdavConfigNameField: NSTextField!
     var webdavAutoSyncCheck: NSSwitch!
     var webdavStatusLabel: NSTextField!
+    var lastSyncLabel: NSTextField!  // 最近同步时间
     // S3 UI
     var syncTypeSegment: NSSegmentedControl!
     var s3ProviderPopup: NSPopUpButton!
@@ -911,6 +913,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 620),
                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "CodeLight 设置"; win.isReleasedWhenClosed = false
+        // 跟随系统外观：不设 appearance，窗口继承系统深色/浅色
         super.init(window: win); win.delegate = self; buildUI()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -948,15 +951,20 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
     func buildUI() {
         guard let view = window?.contentView else { return }
         let c = appDelegate.config
+        // contentView 底层用动态背景，确保跟随系统外观
+        view.wantsLayer = true
+        let bgView = DynamicBackgroundView(frame: view.bounds)
+        bgView.dynamicColor = .windowBackgroundColor
+        bgView.autoresizingMask = [.width, .height]
+        view.addSubview(bgView)
         let sideW: CGFloat = 150
         let contentW = (window?.frame.width ?? 800) - sideW - 1
         let contentH: CGFloat = 620
         let mainH = contentH
 
         // --- Left Sidebar ---
-        let sidebarBg = NSView(frame: NSRect(x: 0, y: 0, width: sideW, height: contentH))
-        sidebarBg.wantsLayer = true
-        sidebarBg.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        let sidebarBg = DynamicBackgroundView(frame: NSRect(x: 0, y: 0, width: sideW, height: contentH))
+        sidebarBg.dynamicColor = .controlBackgroundColor
         view.addSubview(sidebarBg)
 
         // Sidebar buttons (replacing NSTableView for reliable click handling)
@@ -988,9 +996,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         view.addSubview(rightSep)
 
         // --- Right Content Area ---
-        let contentArea = NSView(frame: NSRect(x: sideW + 1, y: 0, width: contentW, height: contentH))
-        contentArea.wantsLayer = true
-        contentArea.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let contentArea = DynamicBackgroundView(frame: NSRect(x: sideW + 1, y: 0, width: contentW, height: contentH))
+        contentArea.dynamicColor = .windowBackgroundColor
         view.addSubview(contentArea)
 
         generalContainer = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
@@ -1018,15 +1025,20 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         buildHookTab(hookContainer!)
 
         let statsDoc = FlippedView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        statsDoc.wantsLayer = true
+        statsDoc.layer?.backgroundColor = NSColor.clear.cgColor  // 透明，透出 statsContainer 深色底
         buildStatsTab(statsDoc, c)
-        statsContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
-        statsContainer.wantsLayer = true
-        statsContainer.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.95).cgColor
+        let statsBg = DynamicBackgroundView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
+        statsBg.dynamicColor = .windowBackgroundColor
+        statsContainer = statsBg
         let statsScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: contentW, height: mainH))
         statsScroll.documentView = statsDoc
         statsScroll.hasVerticalScroller = false
         statsScroll.drawsBackground = false
         statsScroll.backgroundColor = NSColor.clear
+        // clipView 也要透明，否则默认画 system 白底
+        statsScroll.contentView.drawsBackground = false
+        statsScroll.contentView.backgroundColor = NSColor.clear
         statsContainer.addSubview(statsScroll)
 
         // ☁️ 高级选项卡
@@ -1057,6 +1069,18 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         for (i, container) in containers.enumerated() {
             contentArea.addSubview(container)
             container.isHidden = (i != 0)
+        }
+
+        // 监听系统外观变化，重建含静态 cgColor 快照的页面（统计页图表），实现跟随系统
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(systemAppearanceChanged),
+            name: NSNotification.Name("AppleInterfaceThemeChangedNotification"), object: nil
+        )
+    }
+
+    @objc private func systemAppearanceChanged() {
+        DispatchQueue.main.async { [weak self] in
+            self?.rebuildStatsTab()
         }
     }
 
@@ -1185,7 +1209,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         if let slider = blinkAcc.subviews.first(where: { $0 is NSSlider }) as? NSSlider { blinkSlider = slider }
         if let lbl = blinkAcc.subviews.first(where: { $0 is NSTextField }) as? NSTextField { blinkLabel = lbl }
 
-        let sizeAcc = SettingsRowView.makeSlider(value: c.windowSize, min: 30, max: 120, format: "%.0f") { [weak self] v in
+        let sizeAcc = SettingsRowView.makeSlider(value: c.windowSize, min: 30, max: 100, format: "%.0f") { [weak self] v in
             guard let self = self else { return }
             self.appDelegate.config.windowSize = v
             self.appDelegate.saveConfig()
@@ -1438,7 +1462,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         let listH: CGFloat = 220
         alwaysAllowRulesList = FlippedView(frame: NSRect(x: 0, y: 0, width: rulesCard.frame.width - 24, height: listH))
         alwaysAllowRulesList.wantsLayer = true
-        alwaysAllowRulesList.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        alwaysAllowRulesList.layer?.backgroundColor = NSColor.clear.cgColor  // 透明，跟随父卡片深浅
         alwaysAllowRulesList.layer?.cornerRadius = 6
 
         let scrollView = NSScrollView(frame: NSRect(x: 12, y: ry, width: rulesCard.frame.width - 24, height: listH))
@@ -1516,7 +1540,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         let blListH: CGFloat = 160
         blacklistRulesList = FlippedView(frame: NSRect(x: 0, y: 0, width: blCard.frame.width - 24, height: blListH))
         blacklistRulesList.wantsLayer = true
-        blacklistRulesList.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        blacklistRulesList.layer?.backgroundColor = NSColor.clear.cgColor  // 透明，跟随父卡片深浅
         blacklistRulesList.layer?.cornerRadius = 6
 
         let blScroll = NSScrollView(frame: NSRect(x: 12, y: by, width: blCard.frame.width - 24, height: blListH))
@@ -2194,6 +2218,30 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
 
     // MARK: - Advanced Tab (WebDAV Sync)
 
+    /// 更新「最近同步时间」标签
+    private func updateLastSyncLabel() {
+        let ts = appDelegate.config.lastSyncTime
+        guard lastSyncLabel != nil else { return }
+        if ts <= 0 {
+            lastSyncLabel.stringValue = "最近同步：从未"
+            return
+        }
+        let date = Date(timeIntervalSince1970: ts)
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "zh_CN")
+        fmt.dateFormat = "MM-dd HH:mm"
+        let dateStr = fmt.string(from: date)
+        // 相对时间
+        let elapsed = Date().timeIntervalSince(date)
+        let rel: String
+        if elapsed < 60 { rel = "刚刚" }
+        else if elapsed < 3600 { rel = "\(Int(elapsed/60)) 分钟前" }
+        else if elapsed < 86400 { rel = "\(Int(elapsed/3600)) 小时前" }
+        else { rel = "\(Int(elapsed/86400)) 天前" }
+        lastSyncLabel.stringValue = "最近同步：\(dateStr)（\(rel)）"
+    }
+
+
     private func buildAdvancedTab(_ view: NSView, _ c: AppConfig) {
         var y: CGFloat = 16
         let contentW = view.bounds.width - 32
@@ -2211,6 +2259,15 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         switcherGroup.autoresizingMask = .width
         view.addSubview(switcherGroup)
         y += switcherGroup.frame.height + 8
+
+        // 最近同步时间
+        lastSyncLabel = NSTextField(labelWithString: "")
+        lastSyncLabel.font = NSFont.systemFont(ofSize: 11)
+        lastSyncLabel.textColor = NSColor.tertiaryLabelColor
+        lastSyncLabel.frame = NSRect(x: 20, y: y, width: contentW, height: 16)
+        updateLastSyncLabel()
+        view.addSubview(lastSyncLabel)
+        y += 24
 
         // --- WebDAV 容器 ---
         webdavContainerView = FlippedView(frame: NSRect(x: 16, y: y, width: contentW, height: 400))
@@ -2251,6 +2308,29 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         view.addSubview(logContent)
     }
 
+    /// 统一美化输入框：加宽(260)、圆角 bezel、系统焦点环、居中字号
+    private func makeStyledField(placeholder: String = "") -> NSTextField {
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 26))
+        styleField(field, placeholder: placeholder)
+        return field
+    }
+
+    /// 安全输入框版本（密码）
+    private func makeStyledField(secure: Bool, placeholder: String = "") -> NSSecureTextField {
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 26))
+        styleField(field, placeholder: placeholder)
+        return field
+    }
+
+    private func styleField(_ field: NSTextField, placeholder: String) {
+        field.font = NSFont.systemFont(ofSize: 12)
+        field.bezelStyle = .roundedBezel
+        field.focusRingType = .default
+        field.placeholderString = placeholder
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    }
+
     private func buildWebDAVContent(_ view: NSView, _ c: AppConfig, width: CGFloat) {
         let contentW = width
         var y: CGFloat = 0
@@ -2265,42 +2345,56 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         y += 24
 
         // --- Group: WebDAV 连接 ---
-        let urlField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
-        urlField.font = NSFont.systemFont(ofSize: 12)
-        urlField.placeholderString = "https://dav.jianguoyun.com/dav/"
+        let urlField = makeStyledField(placeholder: "https://dav.jianguoyun.com/dav/")
         urlField.stringValue = c.webdavURL
         urlField.lineBreakMode = .byTruncatingMiddle
         webdavURLField = urlField
 
-        let userField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
-        userField.font = NSFont.systemFont(ofSize: 12)
-        userField.placeholderString = "邮箱或用户名"
+        let userField = makeStyledField(placeholder: "邮箱或用户名")
         userField.stringValue = c.webdavUser
         webdavUserField = userField
 
-        let passField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
-        passField.font = NSFont.systemFont(ofSize: 12)
-        passField.placeholderString = "应用专用密码"
+        let passField = makeStyledField(secure: true, placeholder: "应用密码（坚果云请使用「第三方应用密码」）")
         passField.stringValue = c.webdavPass
         webdavPassField = passField
 
-        let pathField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
-        pathField.font = NSFont.systemFont(ofSize: 12)
-        pathField.placeholderString = "/codelight/config.json"
+        let pathField = makeStyledField(placeholder: "codelight")
         pathField.stringValue = c.webdavPath
         pathField.lineBreakMode = .byTruncatingMiddle
         webdavPathField = pathField
 
+        let configNameField = makeStyledField(placeholder: "default")
+        configNameField.stringValue = c.webdavConfigName
+        webdavConfigNameField = configNameField
+
+        // 失焦自动保存：所有 WebDAV 输入框设 delegate
+        for f in [urlField, userField, passField, pathField, configNameField] {
+            f.delegate = self
+        }
+
         let connectGroup = SettingsGroupView(header: "WebDAV 连接", rows: [
-            SettingsRowView(title: "服务器地址", accessory: urlField, isFirst: true),
-            SettingsRowView(title: "用户名", accessory: userField),
-            SettingsRowView(title: "密码", accessory: passField),
-            SettingsRowView(title: "远程路径", accessory: pathField, isLast: true),
+            SettingsRowView(title: "WebDAV 服务器地址", accessory: urlField, isFirst: true),
+            SettingsRowView(title: "WebDAV 账户", accessory: userField),
+            SettingsRowView(title: "WebDAV 密码", accessory: passField),
+            SettingsRowView(title: "远程根目录", accessory: pathField),
+            SettingsRowView(title: "同步配置名", accessory: configNameField, isLast: true),
         ])
         connectGroup.frame.origin = NSPoint(x: 0, y: y)
         connectGroup.autoresizingMask = .width
         view.addSubview(connectGroup)
         y += connectGroup.frame.height + 8
+
+        // 密码提示（输入框底部）
+        let passHint = NSTextField(labelWithString: "请在坚果云「安全选项」中生成「第三方应用密码」，不要使用登录密码。")
+        passHint.font = NSFont.systemFont(ofSize: 10)
+        passHint.textColor = NSColor.tertiaryLabelColor
+        passHint.lineBreakMode = .byWordWrapping
+        passHint.usesSingleLineMode = false
+        passHint.preferredMaxLayoutWidth = contentW - 20
+        let hintH: CGFloat = 28
+        passHint.frame = NSRect(x: 4, y: y, width: contentW - 8, height: hintH)
+        view.addSubview(passHint)
+        y += hintH + 8
 
         // --- Group: 同步 ---
         let autoSyncToggle = SettingsRowView.makeToggle(isOn: c.webdavAutoSync) { [weak self] isOn in
@@ -2322,12 +2416,12 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         testBtn.target = self; testBtn.action = #selector(webdavTestConnection(_:))
 
         let uploadBtn = NSButton(frame: NSRect(x: btnW + btnGap, y: 0, width: btnW, height: 26))
-        uploadBtn.title = "上传配置"; uploadBtn.bezelStyle = .rounded
+        uploadBtn.title = "上传到云端"; uploadBtn.bezelStyle = .rounded
         uploadBtn.font = NSFont.systemFont(ofSize: 11)
         uploadBtn.target = self; uploadBtn.action = #selector(webdavUpload(_:))
 
         let downloadBtn = NSButton(frame: NSRect(x: (btnW + btnGap) * 2, y: 0, width: btnW, height: 26))
-        downloadBtn.title = "下载配置"; downloadBtn.bezelStyle = .rounded
+        downloadBtn.title = "从云端下载"; downloadBtn.bezelStyle = .rounded
         downloadBtn.font = NSFont.systemFont(ofSize: 11)
         downloadBtn.target = self; downloadBtn.action = #selector(webdavDownload(_:))
 
@@ -2337,7 +2431,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         buttonsView.addSubview(downloadBtn)
 
         let syncGroup = SettingsGroupView(header: "同步", rows: [
-            SettingsRowView(title: "自动同步", subtitle: "保存设置时自动上传",
+            SettingsRowView(title: "自动同步", subtitle: "开启后每次数据库变更都会自动上传到 WebDAV",
                             accessory: autoSyncToggle, isFirst: true),
             SettingsRowView(title: "操作", accessory: buttonsView, isLast: true),
         ])
@@ -2355,37 +2449,17 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         webdavStatusLabel.stringValue = ""
         view.addSubview(webdavStatusLabel)
         y += 24
-
-        // Help text
-        let helpText = NSTextField(frame: NSRect(x: 10, y: y, width: contentW - 20, height: 16))
-        helpText.isEditable = false; helpText.isBordered = false; helpText.backgroundColor = .clear; helpText.drawsBackground = false
-        helpText.font = NSFont.systemFont(ofSize: 10)
-        helpText.textColor = NSColor.tertiaryLabelColor
-        helpText.stringValue = "\u{1f4a1} 坚果云用应用专用密码 | 同步：偏好设置，不含窗口位置"
-        view.addSubview(helpText)
     }
 
     private func buildLogContent(_ view: NSView, width: CGFloat) {
         let rx: CGFloat = 10
         let logW = width - rx * 2
 
-        let refreshLogBtn = NSButton(frame: NSRect(x: rx, y: 0, width: 70, height: 24))
-        refreshLogBtn.title = "刷新"; refreshLogBtn.bezelStyle = .rounded
-        refreshLogBtn.font = NSFont.systemFont(ofSize: 11)
-        refreshLogBtn.target = self; refreshLogBtn.action = #selector(refreshLog(_:))
-        view.addSubview(refreshLogBtn)
-
-        let clearLogBtn = NSButton(frame: NSRect(x: rx + 78, y: 0, width: 70, height: 24))
-        clearLogBtn.title = "清空"; clearLogBtn.bezelStyle = .rounded
-        clearLogBtn.font = NSFont.systemFont(ofSize: 11)
-        clearLogBtn.target = self; clearLogBtn.action = #selector(clearLog(_:))
-        view.addSubview(clearLogBtn)
-
-        logTextView = NSTextView(frame: NSRect(x: rx, y: 28, width: logW, height: 180))
+        logTextView = NSTextView(frame: NSRect(x: rx, y: 0, width: logW, height: 208))
         logTextView.isEditable = false
         logTextView.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        logTextView.textColor = NSColor(white: 0.7, alpha: 1.0)
-        logTextView.backgroundColor = NSColor(white: 0.08, alpha: 1.0)
+        logTextView.textColor = NSColor.textColor
+        logTextView.backgroundColor = NSColor.textBackgroundColor
         logTextView.drawsBackground = true
         logTextView.isRichText = false
         view.addSubview(logTextView)
@@ -2468,12 +2542,26 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
                 self?.webdavStatusLabel.stringValue = msg
                 self?.webdavStatusLabel.textColor = success ? NSColor.systemGreen : NSColor.systemRed
                 sender.isEnabled = true
+                if success {
+                    self?.appDelegate.config.lastSyncTime = Date().timeIntervalSince1970
+                    self?.appDelegate.saveConfig()
+                    self?.updateLastSyncLabel()
+                }
             }
         }
     }
 
     @objc private func webdavDownload(_ sender: NSButton) {
         let c = collectWebDAVConfig()
+
+        // 确认覆盖本地配置
+        let alert = NSAlert()
+        alert.messageText = "从云端下载"
+        alert.informativeText = "将用云端配置覆盖本地设置，确定继续吗？"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "覆盖本地")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         webdavStatusLabel.stringValue = "正在下载..."
         webdavStatusLabel.textColor = NSColor.secondaryLabelColor
@@ -2490,10 +2578,12 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
                     config.webdavUser = c.webdavUser
                     config.webdavPass = c.webdavPass
                     config.webdavPath = c.webdavPath
+                    config.lastSyncTime = Date().timeIntervalSince1970
                     config.save()
                     self.syncFromConfig()
                     self.webdavStatusLabel.stringValue = "下载成功，配置已应用 ✓"
                     self.webdavStatusLabel.textColor = NSColor.systemGreen
+                    self.updateLastSyncLabel()
                 } else {
                     self.webdavStatusLabel.stringValue = msg
                     self.webdavStatusLabel.textColor = NSColor.systemRed
@@ -2502,13 +2592,33 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         }
     }
 
+    // MARK: - 失焦自动保存（WebDAV 输入框）
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        switch field {
+        case webdavURLField: appDelegate.config.webdavURL = field.stringValue.trimmingCharacters(in: .whitespaces)
+        case webdavUserField: appDelegate.config.webdavUser = field.stringValue
+        case webdavPassField: appDelegate.config.webdavPass = field.stringValue
+        case webdavPathField:
+            appDelegate.config.webdavPath = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if appDelegate.config.webdavPath.isEmpty { appDelegate.config.webdavPath = "codelight" }
+        case webdavConfigNameField:
+            appDelegate.config.webdavConfigName = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if appDelegate.config.webdavConfigName.isEmpty { appDelegate.config.webdavConfigName = "default" }
+        default: return
+        }
+        appDelegate.saveConfig()
+    }
+
     private func collectWebDAVConfig() -> AppConfig {
         var c = appDelegate.config
         c.webdavURL = webdavURLField.stringValue.trimmingCharacters(in: .whitespaces)
         c.webdavUser = webdavUserField.stringValue
         c.webdavPass = webdavPassField.stringValue
         c.webdavPath = webdavPathField.stringValue.trimmingCharacters(in: .whitespaces)
-        if c.webdavPath.isEmpty { c.webdavPath = "/codelight/config.json" }
+        if c.webdavPath.isEmpty { c.webdavPath = "codelight" }
+        c.webdavConfigName = webdavConfigNameField.stringValue.trimmingCharacters(in: .whitespaces)
+        if c.webdavConfigName.isEmpty { c.webdavConfigName = "default" }
         return c
     }
 
@@ -2649,12 +2759,12 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         testBtn.target = self; testBtn.action = #selector(s3TestConnection(_:))
 
         let uploadBtn = NSButton(frame: NSRect(x: btnW + btnGap, y: 0, width: btnW, height: 26))
-        uploadBtn.title = "上传配置"; uploadBtn.bezelStyle = .rounded
+        uploadBtn.title = "上传到云端"; uploadBtn.bezelStyle = .rounded
         uploadBtn.font = NSFont.systemFont(ofSize: 11)
         uploadBtn.target = self; uploadBtn.action = #selector(s3Upload(_:))
 
         let downloadBtn = NSButton(frame: NSRect(x: (btnW + btnGap) * 2, y: 0, width: btnW, height: 26))
-        downloadBtn.title = "下载配置"; downloadBtn.bezelStyle = .rounded
+        downloadBtn.title = "从云端下载"; downloadBtn.bezelStyle = .rounded
         downloadBtn.font = NSFont.systemFont(ofSize: 11)
         downloadBtn.target = self; downloadBtn.action = #selector(s3Download(_:))
 
@@ -2719,12 +2829,27 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
                 self?.s3StatusLabel.stringValue = msg
                 self?.s3StatusLabel.textColor = success ? NSColor.systemGreen : NSColor.systemRed
                 sender.isEnabled = true
+                if success {
+                    self?.appDelegate.config.lastSyncTime = Date().timeIntervalSince1970
+                    self?.appDelegate.saveConfig()
+                    self?.updateLastSyncLabel()
+                }
             }
         }
     }
 
     @objc private func s3Download(_ sender: NSButton) {
         let c = collectS3Config()
+
+        // 确认覆盖本地配置
+        let alert = NSAlert()
+        alert.messageText = "从云端下载"
+        alert.informativeText = "将用云端配置覆盖本地设置，确定继续吗？"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "覆���本地")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
         s3StatusLabel.stringValue = "正在下载..."
         s3StatusLabel.textColor = NSColor.secondaryLabelColor
         sender.isEnabled = false
@@ -2744,10 +2869,12 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
                     config.s3AccessKeyID = c.s3AccessKeyID
                     config.s3SecretAccessKey = c.s3SecretAccessKey
                     config.s3RemotePath = c.s3RemotePath
+                    config.lastSyncTime = Date().timeIntervalSince1970
                     config.save()
                     self.syncFromConfig()
                     self.s3StatusLabel.stringValue = "下载成功，配置已应用 ✓"
                     self.s3StatusLabel.textColor = NSColor.systemGreen
+                    self.updateLastSyncLabel()
                 } else {
                     self.s3StatusLabel.stringValue = msg
                     self.s3StatusLabel.textColor = NSColor.systemRed
@@ -2777,18 +2904,19 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         var y: CGFloat = 16
         let cw: CGFloat = view.bounds.width - 32
 
-        // Dark theme fixed colors
-        let titleColor = NSColor(white: 1.0, alpha: 0.5)
-        let cardTitleColor = NSColor(white: 1.0, alpha: 0.4)
-        let cardValueColor = NSColor(white: 1.0, alpha: 0.9)
-        let cardBgColor = NSColor(white: 1.0, alpha: 0.06)
-        let legendTextColor = NSColor(white: 1.0, alpha: 0.45)
-        let dayLabelColor = NSColor(white: 1.0, alpha: 0.35)
-        let toolNameColor = NSColor(white: 1.0, alpha: 0.85)
-        let countColor = NSColor(white: 1.0, alpha: 0.45)
-        let barTrackColor = NSColor(white: 1.0, alpha: 0.06)
-        let noDataColor = NSColor(white: 1.0, alpha: 0.3)
-        let infoColor = NSColor(white: 1.0, alpha: 0.25)
+        // 显式跟随系统：根据 effectiveAppearance 判断深浅，硬取色，避免语义色快照冻结
+        let isDark = view.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let titleColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.85)
+        let cardTitleColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.55)
+        let cardValueColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.9)
+        let cardBgColor = NSColor(white: isDark ? 0.18 : 1.0, alpha: 1.0)
+        let legendTextColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.6)
+        let dayLabelColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.45)
+        let toolNameColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.85)
+        let countColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.55)
+        let barTrackColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.12)
+        let noDataColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.35)
+        let infoColor = NSColor(white: isDark ? 1.0 : 0.0, alpha: 0.35)
 
         func sectionTitle(_ text: String, _ yy: CGFloat) {
             let l = NSTextField(frame: NSRect(x: 16, y: yy, width: 300, height: 20))
@@ -2840,7 +2968,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
 
         let barView = NSView(frame: NSRect(x: 16, y: y, width: cw, height: 28))
         barView.wantsLayer = true
-        barView.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        barView.layer?.backgroundColor = NSColor.separatorColor.cgColor
         barView.layer?.cornerRadius = 6
         barView.layer?.masksToBounds = true
 
@@ -2856,7 +2984,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
 
         let idleBar = NSView(frame: NSRect(x: cw * CGFloat(thinkPct + workPct), y: 0, width: cw * CGFloat(idlePct), height: 28))
         idleBar.wantsLayer = true
-        idleBar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.08).cgColor
+        idleBar.layer?.backgroundColor = NSColor.systemGray.withAlphaComponent(0.5).cgColor
         barView.addSubview(idleBar)
         view.addSubview(barView)
         y += 36
@@ -2876,7 +3004,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         let legendY = y
         legendDot(x: 16, y: legendY, color: NSColor(red: 1.0, green: 0.62, blue: 0.04, alpha: 1.0), text: "思考 \(formatDuration(stats.thinkingDur))")
         legendDot(x: 145, y: legendY, color: NSColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1.0), text: "执行 \(formatDuration(stats.workingDur))")
-        legendDot(x: 274, y: legendY, color: NSColor(white: 1.0, alpha: 0.2), text: "空闲 \(formatDuration(stats.idleDur))")
+        legendDot(x: 274, y: legendY, color: NSColor.tertiaryLabelColor, text: "空闲 \(formatDuration(stats.idleDur))")
         y += 28
 
         // --- 本周趋势 ---
@@ -2901,7 +3029,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
                 let vl = NSTextField(frame: NSRect(x: CGFloat(i) * colW + 2, y: chartH - 14, width: colW - 4, height: 14))
                 vl.isEditable = false; vl.isBordered = false; vl.backgroundColor = .clear
                 vl.stringValue = formatDuration(d.duration); vl.font = NSFont.systemFont(ofSize: 9)
-                vl.textColor = NSColor(white: 1.0, alpha: 0.35); vl.alignment = .center
+                vl.textColor = NSColor.secondaryLabelColor; vl.alignment = .center
                 chartView.addSubview(vl)
             }
 
@@ -2913,7 +3041,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
             } else if d.duration > 0 {
                 bar.layer?.backgroundColor = NSColor(red: 0.04, green: 0.52, blue: 1.0, alpha: 0.6).cgColor
             } else {
-                bar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.06).cgColor
+                bar.layer?.backgroundColor = NSColor.systemGray.withAlphaComponent(0.5).cgColor
             }
             chartView.addSubview(bar)
 

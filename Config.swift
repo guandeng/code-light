@@ -37,8 +37,10 @@ struct AppConfig {
     var webdavURL: String = ""     // WebDAV 服务器地址，如 https://dav.jianguoyun.com/dav/
     var webdavUser: String = ""    // WebDAV 用户名
     var webdavPass: String = ""    // WebDAV 密码/应用专用密码
-    var webdavPath: String = "/codelight/config.json"  // 远程配置文件路径
+    var webdavPath: String = "codelight"  // 远程根目录
+    var webdavConfigName: String = "default"  // 同步配置名
     var webdavAutoSync: Bool = false  // 自动同步开关
+    var lastSyncTime: Double = 0  // 最近一次成功同步的时间戳（上传或下载）
     // S3 同步
     var s3ProviderPreset: Int = 0                    // S3Sync.presets 索引
     var s3Endpoint: String = ""                      // 自定义 endpoint（覆盖预设）
@@ -76,7 +78,7 @@ struct AppConfig {
         if let v = ud.string(forKey: "displayMode") { c.displayMode = v }
         else if c.horizontal { c.displayMode = "horizontal" }
         if ud.object(forKey: "showStatusText") != nil { c.showStatusText = ud.bool(forKey: "showStatusText") }
-        if ud.double(forKey: "windowSize") > 0 { c.windowSize = ud.double(forKey: "windowSize") }
+        if ud.double(forKey: "windowSize") > 0 { c.windowSize = min(max(ud.double(forKey: "windowSize"), 30), 100) }
         if ud.object(forKey: "windowX") != nil { c.windowX = ud.double(forKey: "windowX") }
         if ud.object(forKey: "windowY") != nil { c.windowY = ud.double(forKey: "windowY") }
         if let v = ud.string(forKey: "edgeBar") { c.edgeBar = v }
@@ -94,9 +96,18 @@ struct AppConfig {
         if let v = ud.string(forKey: "statsWebhook") { c.statsWebhook = v }
         if let v = ud.string(forKey: "webdavURL") { c.webdavURL = v }
         if let v = ud.string(forKey: "webdavUser") { c.webdavUser = v }
-        if let v = ud.string(forKey: "webdavPass") { c.webdavPass = v }
-        if let v = ud.string(forKey: "webdavPath") { c.webdavPath = v }
+        // 敏感凭据优先从 SQLite secrets 读，回退 plist（兼容旧版本迁移）
+        if let v = Database.shared.getSecret("webdavPass") { c.webdavPass = v }
+        else if let v = ud.string(forKey: "webdavPass") { c.webdavPass = v }
+        if let v = ud.string(forKey: "webdavPath") {
+            c.webdavPath = v
+            // 迁移：旧版本存的是完整文件路径，收敛成根目录名 codelight
+            let legacy = ["/codelight/config.json", "/cc-switch-sync", "/codelight"]
+            if legacy.contains(v) { c.webdavPath = "codelight" }
+        }
+        if let v = ud.string(forKey: "webdavConfigName") { c.webdavConfigName = v }
         if ud.object(forKey: "webdavAutoSync") != nil { c.webdavAutoSync = ud.bool(forKey: "webdavAutoSync") }
+        if ud.object(forKey: "lastSyncTime") != nil { c.lastSyncTime = ud.double(forKey: "lastSyncTime") }
         if let v = ud.string(forKey: "skillsRepoURL") { c.skillsRepoURL = v }
         if let v = ud.string(forKey: "skillsCatalogPath") { c.skillsCatalogPath = v }
         // S3 同步
@@ -104,8 +115,10 @@ struct AppConfig {
         if let v = ud.string(forKey: "s3Endpoint") { c.s3Endpoint = v }
         if let v = ud.string(forKey: "s3Region") { c.s3Region = v }
         if let v = ud.string(forKey: "s3Bucket") { c.s3Bucket = v }
-        if let v = ud.string(forKey: "s3AccessKeyID") { c.s3AccessKeyID = v }
-        if let v = ud.string(forKey: "s3SecretAccessKey") { c.s3SecretAccessKey = v }
+        if let v = Database.shared.getSecret("s3AccessKeyID") { c.s3AccessKeyID = v }
+        else if let v = ud.string(forKey: "s3AccessKeyID") { c.s3AccessKeyID = v }
+        if let v = Database.shared.getSecret("s3SecretAccessKey") { c.s3SecretAccessKey = v }
+        else if let v = ud.string(forKey: "s3SecretAccessKey") { c.s3SecretAccessKey = v }
         if let v = ud.string(forKey: "s3RemotePath") { c.s3RemotePath = v }
         if ud.object(forKey: "s3AutoSync") != nil { c.s3AutoSync = ud.bool(forKey: "s3AutoSync") }
         return c
@@ -144,9 +157,10 @@ struct AppConfig {
         ud.set(statsWebhook, forKey: "statsWebhook")
         ud.set(webdavURL, forKey: "webdavURL")
         ud.set(webdavUser, forKey: "webdavUser")
-        ud.set(webdavPass, forKey: "webdavPass")
         ud.set(webdavPath, forKey: "webdavPath")
+        ud.set(webdavConfigName, forKey: "webdavConfigName")
         ud.set(webdavAutoSync, forKey: "webdavAutoSync")
+        ud.set(lastSyncTime, forKey: "lastSyncTime")
         ud.set(skillsRepoURL, forKey: "skillsRepoURL")
         ud.set(skillsCatalogPath, forKey: "skillsCatalogPath")
         // S3 同步
@@ -154,10 +168,15 @@ struct AppConfig {
         ud.set(s3Endpoint, forKey: "s3Endpoint")
         ud.set(s3Region, forKey: "s3Region")
         ud.set(s3Bucket, forKey: "s3Bucket")
-        ud.set(s3AccessKeyID, forKey: "s3AccessKeyID")
-        ud.set(s3SecretAccessKey, forKey: "s3SecretAccessKey")
         ud.set(s3RemotePath, forKey: "s3RemotePath")
         ud.set(s3AutoSync, forKey: "s3AutoSync")
+        // 敏感凭据：写入 SQLite secrets 表（文件权限 600），不再进 plist
+        ud.removeObject(forKey: "webdavPass")
+        ud.removeObject(forKey: "s3AccessKeyID")
+        ud.removeObject(forKey: "s3SecretAccessKey")
+        Database.shared.setSecret("webdavPass", webdavPass)
+        Database.shared.setSecret("s3AccessKeyID", s3AccessKeyID)
+        Database.shared.setSecret("s3SecretAccessKey", s3SecretAccessKey)
     }
 
     /// 导出为 JSON（用于 WebDAV 同步，排除设备相关的位置信息）

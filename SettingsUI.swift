@@ -4,6 +4,33 @@
 import Cocoa
 
 // ============================================================
+// DynamicBackgroundView — 跟随系统外观的动态背景视图
+// 解决 layer.backgroundColor = NSColor.cgColor 静态快照不响应外观切换的问题
+// ============================================================
+class DynamicBackgroundView: NSView {
+    var dynamicColor: NSColor = .windowBackgroundColor {
+        didSet { needsDisplay = true }
+    }
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func updateLayer() {
+        // updateLayer 在 effectiveAppearance 确定后由系统调用，此处读取 cgColor 即为当前外观解析值
+        layer?.backgroundColor = dynamicColor.cgColor
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+    override func layout() {
+        super.layout()
+        needsDisplay = true
+    }
+}
+
+// ============================================================
 // SettingsRowView — 单行设置项
 // ============================================================
 
@@ -25,7 +52,7 @@ class SettingsRowView: NSView {
         let rowH: CGFloat = subtitle != nil ? 56 : 44
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: rowH))
         wantsLayer = true
-        layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.85).cgColor
+        // 卡片背景在 updateLayer() 里动态解析，跟随系统外观实时切换
 
         // 圆角处理
         if isFirst && isLast {
@@ -109,6 +136,15 @@ class SettingsRowView: NSView {
             separator?.autoresizingMask = .width
             addSubview(separator!)
         }
+    }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -198,6 +234,7 @@ class SettingsRowView: NSView {
 class SettingsGroupView: NSView {
     var rows: [SettingsRowView] = []
     private var headerLabel: NSTextField?
+    override var isFlipped: Bool { true }  // 翻转坐标系：y=0 在顶部，rows 从顶往下堆
 
     init(header: String? = nil, rows: [SettingsRowView]) {
         let rowH: CGFloat = rows.reduce(0) { $0 + $1.frame.height }
@@ -207,17 +244,17 @@ class SettingsGroupView: NSView {
 
         wantsLayer = true
 
-        // 分组标题
+        // 分组标题（顶部）
         if let h = header {
             headerLabel = NSTextField(labelWithString: h)
             headerLabel?.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
             headerLabel?.textColor = NSColor.secondaryLabelColor
-            headerLabel?.frame = NSRect(x: 16, y: totalH - 20, width: 200, height: 20)
+            headerLabel?.frame = NSRect(x: 16, y: 8, width: 200, height: 20)
             addSubview(headerLabel!)
         }
 
-        // 堆叠 rows
-        var y: CGFloat = 0
+        // 堆叠 rows：header 下方往下
+        var y: CGFloat = headerH
         for (i, row) in rows.enumerated() {
             row.frame = NSRect(x: 0, y: y, width: 600, height: row.frame.height)
             row.autoresizingMask = .width
@@ -232,18 +269,18 @@ class SettingsGroupView: NSView {
     override func layout() {
         super.layout()
         let w = bounds.width
-        var y: CGFloat = 0
+        let headerH: CGFloat = headerLabel != nil ? 28 : 0
+        if let hl = headerLabel {
+            hl.frame = NSRect(x: 16, y: 8, width: w - 32, height: 20)
+        }
+        var y: CGFloat = headerH
         for row in rows {
             let h = row.preferredHeight(for: w)
             row.frame = NSRect(x: 0, y: y, width: w, height: h)
             y += h
         }
-        if let hl = headerLabel {
-            hl.frame = NSRect(x: 16, y: y, width: w - 32, height: 20)
-        }
         // 调整自身高度
-        let headerH = headerLabel != nil ? 28 : 0
-        frame.size = NSSize(width: w, height: y + CGFloat(headerH))
+        frame.size = NSSize(width: w, height: y)
     }
 }
 

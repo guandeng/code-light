@@ -34,6 +34,21 @@ extension AppDelegate {
         let fileMenuItem = NSMenuItem(); fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
 
+        // —— 编辑菜单 ——（必需：NSTextField 的 Cmd+C/V/X/A/Z 依赖主菜单存在这些 selector）
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        let redoItem = editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "删除", action: #selector(NSText.delete(_:)), keyEquivalent: "")
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editMenuItem = NSMenuItem(); editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
         // —— 视图菜单 ——
         let viewMenu = NSMenu(title: "视图")
         viewMenu.addItem(withTitle: "显示/隐藏灯", action: #selector(toggleWindow), keyEquivalent: "t")

@@ -33,7 +33,7 @@ class WebDAVSync {
             return
         }
 
-        let urlStr = buildURL(config.webdavURL, path: config.webdavPath)
+        let urlStr = buildURL(config.webdavURL, path: config.webdavPath, configName: config.webdavConfigName)
         guard let url = URL(string: urlStr) else {
             completion(false, "WebDAV 地址格式错误")
             return
@@ -57,7 +57,7 @@ class WebDAVSync {
             return
         }
 
-        let urlStr = buildURL(config.webdavURL, path: config.webdavPath)
+        let urlStr = buildURL(config.webdavURL, path: config.webdavPath, configName: config.webdavConfigName)
         guard let url = URL(string: urlStr) else {
             completion(false, "WebDAV 地址格式错误", nil)
             return
@@ -146,11 +146,19 @@ class WebDAVSync {
 
     // MARK: - Private
 
-    private func buildURL(_ base: String, path: String) -> String {
+    /// 拼接 WebDAV 完整文件 URL：base/根目录/配置名.json
+    /// - 根目录(path) 是目录名，配置名(configName) 是文件名（不含扩展名）
+    private func buildURL(_ base: String, path: String, configName: String = "default") -> String {
         var url = base.hasSuffix("/") ? base : base + "/"
-        // 移除路径开头的 /
-        let cleanPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
-        url += cleanPath
+        // 根目录：去掉首尾 /
+        var cleanPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        if cleanPath.hasSuffix("/") { cleanPath = String(cleanPath.dropLast()) }
+        if !cleanPath.isEmpty { url += cleanPath + "/" }
+        // 配置名：去掉首尾空白和可能的扩展名，统一加 .json
+        var cleanName = configName.trimmingCharacters(in: .whitespaces)
+        if cleanName.isEmpty { cleanName = "default" }
+        if cleanName.hasSuffix(".json") { cleanName = String(cleanName.dropLast(5)) }
+        url += cleanName + ".json"
         return url
     }
 

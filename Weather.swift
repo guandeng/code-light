@@ -113,7 +113,7 @@ enum WeatherCondition: String {
         case 77: return 0.7
         case 80: return 0.3   // 小阵雨
         case 81: return 0.6   // 中阵雨
-        case 82: return 1.0   // 暴雨
+        case 82: return 0.65   // 暴雨
         case 85: return 0.3   // 小阵雪
         case 86: return 0.9   // 大阵雪
         case 95: return 0.8   // 雷暴
@@ -298,10 +298,11 @@ class WeatherView: NSView {
             ]
             addSnow()
         case .thunderstorm:
-            let dark = 0.3 + dayBrightness * 0.4
+            // 白天提亮：用深灰蓝渐变，避免白天也死黑；夜晚再自然压暗
+            let b = CGFloat(dayBrightness)
             grad.colors = [
-                NSColor(white: 0.15 * dark, alpha: bAlpha * 0.7).cgColor,
-                NSColor(white: 0.10 * dark, alpha: bAlpha * 0.6).cgColor,
+                NSColor(red: 0.18 * b + 0.08, green: 0.20 * b + 0.09, blue: 0.30 * b + 0.12, alpha: bAlpha * 0.75).cgColor,
+                NSColor(red: 0.13 * b + 0.06, green: 0.15 * b + 0.07, blue: 0.24 * b + 0.10, alpha: bAlpha * 0.65).cgColor,
             ]
             addRain()
             startLightning()
@@ -332,10 +333,10 @@ class WeatherView: NSView {
 
     private func addRain() {
         let I = intensity
-        // 小雨稀疏(10颗, 0.12s间隔), 大雨密集(40颗, 0.03s间隔)
-        let burstCount = Int(10 + I * 30)
-        let spawnBatch = max(1, Int(1 + I * 5))
-        let interval = 0.14 - I * 0.11  // 0.14s → 0.03s
+        // 小雨稀疏(8颗, 0.18s间隔), 大雨中等(20颗, 0.10s间隔)
+        let burstCount = Int(8 + I * 12)
+        let spawnBatch = max(1, Int(1 + I * 2))
+        let interval = 0.18 - I * 0.08  // 0.18s → 0.10s
 
         for _ in 0..<burstCount { spawnRainDrop() }
         rainTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(interval), repeats: true) { [weak self] _ in
@@ -370,10 +371,10 @@ class WeatherView: NSView {
         layer?.addSublayer(drop)
         particleLayers.append(drop)
 
-        // 小雨慢(1.5~2.5s), 大雨快(0.4~0.9s)
-        let durMin = 1.8 - I * 1.4   // 1.8s → 0.4s
-        let durMax = 2.8 - I * 1.9   // 2.8s → 0.9s
-        let duration = TimeInterval.random(in: max(durMin, 0.3)...max(durMax, 0.5))
+        // 小雨慢(1.8~2.8s), 大雨(1.1~1.9s)
+        let durMin = 1.8 - I * 0.7   // 1.8s → 1.1s
+        let durMax = 2.8 - I * 0.9   // 2.8s → 1.9s
+        let duration = TimeInterval.random(in: max(durMin, 0.8)...max(durMax, 1.0))
 
         let fall = CABasicAnimation(keyPath: "position.y")
         fall.fromValue = startY
