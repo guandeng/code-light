@@ -196,12 +196,12 @@ extension AppDelegate {
                     "error": NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 0.8),
                 ]
                 self.statusLabel?.textColor = stateColors[sn] ?? NSColor(white: 0.55, alpha: 0.6)
-                // 底部文字：只显示三种
+                // 底部文字：只显示三种（走 L10n）
                 let simpleLabels: [String: String] = [
-                    "idle": "空闲中", "thinking": "思考中", "working": "执行中",
-                    "fixing": "执行中", "error": "执行中"
+                    "idle": L10n.s("空闲中"), "thinking": L10n.s("思考中"), "working": L10n.s("执行中"),
+                    "fixing": L10n.s("执行中"), "error": L10n.s("执行中")
                 ]
-                let displayText = simpleLabels[sn] ?? "空闲中"
+                let displayText = simpleLabels[sn] ?? L10n.s("空闲中")
                 self.statusLabel?.stringValue = displayText
                 self.statusLabel?.isHidden = !self.config.showStatusText
                 self.statusLabel?.toolTip = displayText

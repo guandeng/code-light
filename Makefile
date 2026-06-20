@@ -2,7 +2,7 @@ VERSION ?= 1.0.0
 APP_NAME = CodeLight
 APP_BUNDLE = $(APP_NAME).app
 ZIP_FILE = $(APP_NAME)-v$(VERSION).zip
-SWIFT_SRC = main.swift Config.swift HotkeyManager.swift Weather.swift UI.swift CodeLight.swift PermissionBubble.swift HookConfig.swift MenuBuilder.swift LightWindowBuilder.swift LightAnimator.swift WebDAVSync.swift S3Sync.swift SettingsUI.swift SkillsManager.swift SkillsTab.swift Database.swift
+SWIFT_SRC = main.swift Config.swift HotkeyManager.swift Weather.swift UI.swift CodeLight.swift PermissionBubble.swift HookConfig.swift MenuBuilder.swift LightWindowBuilder.swift LightAnimator.swift WebDAVSync.swift S3Sync.swift SettingsUI.swift SkillsManager.swift SkillsTab.swift Database.swift L10n.swift
 CLI_SRC = codelight-cli.swift
 SERVER_SRC = light-server.py
 BINARY = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
@@ -37,6 +37,17 @@ package: build ## 打包 zip
 	rm -f $(ZIP_FILE)
 	ditto -c -k --sequesterRsrc --keepParent $(APP_BUNDLE) $(ZIP_FILE)
 	@echo "📦 打包完成: $(ZIP_FILE)"
+
+install: build ## 安装到 /Applications（单一运行实例）
+	pkill -9 -f "$(APP_BUNDLE)/Contents/MacOS/CodeLight" 2>/dev/null || true
+	sleep 1
+	rm -rf /Applications/$(APP_NAME).app
+	cp -R $(APP_BUNDLE) /Applications/
+	xattr -cr /Applications/$(APP_NAME).app
+	# 刷新 LaunchServices 注册，避免 open 打不开
+	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/$(APP_NAME).app
+	open /Applications/$(APP_NAME).app
+	@echo "✅ 已安装到 /Applications/$(APP_NAME).app 并启动"
 
 release: package ## 编译 + 打包 + 创建 GitHub Release（用法: make release VERSION=1.0.1）
 	gh release create v$(VERSION) $(ZIP_FILE) \

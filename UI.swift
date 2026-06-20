@@ -978,10 +978,12 @@ class TimelineView: NSView {
         "waiting": NSColor(red: 0.75, green: 0.3, blue: 0.85, alpha: 1),
         "idle": NSColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 0.4),
     ]
-    private let stateLabels: [String: String] = [
-        "idle": "空闲", "thinking": "思考", "working": "执行",
-        "fixing": "修复", "error": "错误", "waiting": "等待",
-    ]
+    private var stateLabels: [String: String] {
+        return [
+            "idle": L10n.s("空闲"), "thinking": L10n.s("思考"), "working": L10n.s("执行"),
+            "fixing": L10n.s("修复"), "error": L10n.s("错误"), "waiting": L10n.s("等待"),
+        ]
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let bg = NSColor(white: 0.12, alpha: 1.0)

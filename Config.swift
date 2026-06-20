@@ -1,5 +1,6 @@
 import Cocoa
 import Foundation
+import CryptoKit
 
 // ============================================================
 // CodeLight — 配置与共享类型
@@ -25,6 +26,7 @@ struct AppConfig {
     var edgeBar: String?  // "left" | "right" | nil
     var mascotType: String = "cow"  // "cow" | "cat" | "robot" | "horse" | "chicken"
     var theme: String = "dark"     // "dark" | "light" | "custom"
+    var language: String = "auto"  // "auto" | "zh" | "en"（auto=跟随系统）
     var customColor: String = "#1C1E22"
     var weatherThemeEnabled: Bool = false
     var weatherCity: String = "深圳"
@@ -68,6 +70,7 @@ struct AppConfig {
         if ud.double(forKey: "opacity") > 0 { c.opacity = ud.double(forKey: "opacity") }
         if ud.double(forKey: "blinkSpeed") > 0 { c.blinkSpeed = ud.double(forKey: "blinkSpeed") }
         if let v = ud.string(forKey: "theme") { c.theme = v }
+        if let v = ud.string(forKey: "language") { c.language = v }
         c.autoLaunch = ud.bool(forKey: "autoLaunch")
         c.showInDock = ud.bool(forKey: "showInDock")
         if ud.object(forKey: "isFloating") != nil { c.isFloating = ud.bool(forKey: "isFloating") }
@@ -84,6 +87,7 @@ struct AppConfig {
         if let v = ud.string(forKey: "edgeBar") { c.edgeBar = v }
         if let v = ud.string(forKey: "mascotType") { c.mascotType = v }
         if let v = ud.string(forKey: "theme") { c.theme = v }
+        if let v = ud.string(forKey: "language") { c.language = v }
         if let v = ud.string(forKey: "customColor") { c.customColor = v }
         if ud.object(forKey: "weatherThemeEnabled") != nil { c.weatherThemeEnabled = ud.bool(forKey: "weatherThemeEnabled") }
         if let v = ud.string(forKey: "weatherCity") { c.weatherCity = v }
@@ -131,6 +135,7 @@ struct AppConfig {
         ud.set(opacity, forKey: "opacity")
         ud.set(blinkSpeed, forKey: "blinkSpeed")
         ud.set(theme, forKey: "theme")
+        ud.set(language, forKey: "language")
         ud.set(autoLaunch, forKey: "autoLaunch")
         ud.set(showInDock, forKey: "showInDock")
         ud.set(isFloating, forKey: "isFloating")
@@ -146,6 +151,7 @@ struct AppConfig {
         if let v = edgeBar { ud.set(v, forKey: "edgeBar") } else { ud.removeObject(forKey: "edgeBar") }
         ud.set(mascotType, forKey: "mascotType")
         ud.set(theme, forKey: "theme")
+        ud.set(language, forKey: "language")
         ud.set(customColor, forKey: "customColor")
         ud.set(weatherThemeEnabled, forKey: "weatherThemeEnabled")
         ud.set(weatherCity, forKey: "weatherCity")
@@ -179,9 +185,14 @@ struct AppConfig {
         Database.shared.setSecret("s3SecretAccessKey", s3SecretAccessKey)
     }
 
-    /// 导出为 JSON（用于 WebDAV 同步，排除设备相关的位置信息）
+    /// 当前同步格式版本（结构变更时 +1，旧版本 app 见到更高版本会拒绝导入防损坏）
+    static let syncSchemaVersion: Int = 2
+
+    /// 导出为 JSON（用于 WebDAV 同步，排除设备相关的位置信息和敏感凭据）
+    /// 外层包 meta（版本/设备/时间/内容哈希），借鉴 cc-switch manifest 设计
     func toJSON() -> [String: Any] {
-        return [
+        // 1. 配置 payload（不含位置/凭据，可安全上云）
+        let payload: [String: Any] = [
             "opacity": opacity,
             "blinkSpeed": blinkSpeed,
             "isFloating": isFloating,
@@ -193,6 +204,7 @@ struct AppConfig {
             "windowSize": windowSize,
             "mascotType": mascotType,
             "theme": theme,
+            "language": language,
             "customColor": customColor,
             "weatherThemeEnabled": weatherThemeEnabled,
             "weatherCity": weatherCity,
@@ -200,15 +212,53 @@ struct AppConfig {
             "permissionMode": permissionMode,
             "pollInterval": pollInterval,
             "webdavAutoSync": webdavAutoSync,
+            "webdavPath": webdavPath,
+            "webdavConfigName": webdavConfigName,
             "skillsRepoURL": skillsRepoURL,
             "skillsCatalogPath": skillsCatalogPath,
             "allowRules": AlwaysAllowManager.shared.rules,
             "denyRules": BlacklistManager.shared.rules,
         ]
+        // 2. 算 payload 的 sha256（序列化后哈希，保证可复现）
+        let contentSha = Self.sha256(of: payload)
+        // 3. 包一层 meta，便于下载方校验完整性/版本/来源
+        return [
+            "schemaVersion": Self.syncSchemaVersion,
+            "deviceName": Self.deviceName(),
+            "createdAt": Date().timeIntervalSince1970,
+            "contentSha256": contentSha,
+            "payload": payload,
+        ]
     }
 
     /// 从 JSON 导入配置（合并，不覆盖位置信息）
-    mutating func applyJSON(_ dict: [String: Any]) {
+    /// - Returns: 校验失败原因（版本不兼容/哈希不匹配）则返回错误描述，成功返回 nil
+    mutating func applyJSON(_ dict: [String: Any]) -> String? {
+        // 兼容旧格式：无 schemaVersion 的裸 payload（v1.2.1 及之前）
+        if dict["schemaVersion"] == nil && dict["payload"] == nil {
+            applyPayload(dict)
+            return nil
+        }
+        // 新格��：校验版本
+        if let v = dict["schemaVersion"] as? Int, v > AppConfig.syncSchemaVersion {
+            return "配置版本(v\(v))高于本机支持(v\(AppConfig.syncSchemaVersion))，请升级 CodeLight"
+        }
+        guard let payload = dict["payload"] as? [String: Any] else {
+            return "配置格式错误：缺少 payload"
+        }
+        // 校验内容哈希（传输损坏/被篡改会不匹配）
+        if let expected = dict["contentSha256"] as? String {
+            let actual = AppConfig.sha256(of: payload)
+            if actual != expected {
+                return "配置完整性校验失败（sha256 不匹配），可能传输损坏"
+            }
+        }
+        applyPayload(payload)
+        return nil
+    }
+
+    /// 应用 payload 到本地配置（不含位置信息和凭据）
+    private mutating func applyPayload(_ dict: [String: Any]) {
         if let v = dict["opacity"] as? Double { opacity = v }
         if let v = dict["blinkSpeed"] as? Double { blinkSpeed = v }
         if let v = dict["isFloating"] as? Bool { isFloating = v }
@@ -220,6 +270,7 @@ struct AppConfig {
         if let v = dict["windowSize"] as? Double { windowSize = v }
         if let v = dict["mascotType"] as? String { mascotType = v }
         if let v = dict["theme"] as? String { theme = v }
+        if let v = dict["language"] as? String { language = v }
         if let v = dict["customColor"] as? String { customColor = v }
         if let v = dict["weatherThemeEnabled"] as? Bool { weatherThemeEnabled = v }
         if let v = dict["weatherCity"] as? String { weatherCity = v }
@@ -236,12 +287,32 @@ struct AppConfig {
         if let denies = dict["denyRules"] as? [String] {
             BlacklistManager.shared.replaceRules(denies)
         }
+        if let v = dict["webdavPath"] as? String { webdavPath = v }
+        if let v = dict["webdavConfigName"] as? String { webdavConfigName = v }
         horizontal = (displayMode == "horizontal")
+    }
+
+    // MARK: - Sync helpers
+
+    /// 计算字典的 sha256（稳定序列化后哈希，用于完整性校验）
+    static func sha256(of dict: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]) else {
+            return ""
+        }
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 本机设备名（多设备同步溯源）
+    static func deviceName() -> String {
+        return ProcessInfo.processInfo.hostName
     }
 }
 
 struct LightStateDef {
     let red: Bool; let yellow: Bool; let green: Bool; let blink: Bool; let label: String
+    /// 本地化后的状态名（label 存中文 key，显示时翻译）
+    var localizedLabel: String { return L10n.s(label) }
 }
 
 let STATES: [String: LightStateDef] = [

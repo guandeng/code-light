@@ -79,8 +79,16 @@
 
 - **macOS 13.0+**，Universal Binary 同时支持 arm64 和 x86_64
 - 不能用 `cgPath`（macOS 14+），用 `NSBezierPath` + `draw()` 代替
-- NSButton 不支持 `textColor`，用 `attributedTitle` 或 `contentTintColor`
+- NSButton ��支持 `textColor`，用 `attributedTitle` 或 `contentTintColor`
 - 非活跃灯用 `lampColor.withAlphaComponent(0.05~0.08)` 淡色，不用纯黑
+
+## 安装与运行（单一来源）
+
+- **唯一运行实例必须装在 `/Applications/CodeLight.app`**，避免开发版/安装版多份混淆
+- 开发流程：`make build` → `make install`（拷贝到 /Applications 并刷新 LaunchServices）
+- **禁止**在 `~/Downloads`、桌面、工作目录直接双击运行残留的旧 bundle
+- 多份安装会导致：①改了不生效（点错 app）②LaunchServices 注册混乱（`open` 打不开）③状态栏出现多个图标
+- 清理：`sudo rm -rf /Applications/CodeLight.app ~/Downloads/CodeLight.app`，只保留 /Applications 一份
 
 ## 设置面板规范
 
@@ -91,6 +99,41 @@
 - 控件工厂方法：`makeToggle`、`makeSlider`、`makePopup`、`makeSegmented`
 - 使用 `NSSwitch`（非 `NSButton.switch`）作为开关控件
 - **所有 NSScrollView 必须隐藏滚动条**：`hasVerticalScroller = false`，支持滚动但不显示滚动条
+
+## 多语言（i18n）
+
+设置面板支持中/英双语切换，由 `L10n.swift`（轻量查表）+ `config.language`（auto/zh/en）驱动。
+
+### 新增可见文案时必须做
+
+- **所有用户可见的中文文案必须用 `L10n.s("中文")` 包裹**，不能直接写裸中文字面量
+  ```swift
+  // ✅ 正确
+  SettingsRowView(title: L10n.s("服务端口"), accessory: portField)
+  btn.title = L10n.s("测试连接")
+  // ❌ 错误（英文模式下不会翻译）
+  SettingsRowView(title: "服务端口", accessory: portField)
+  ```
+- 适用场景：`title:`、`withTitle:`、`placeholderString =`、`.stringValue =`、按钮 `.title =`、菜单项标题、`subtitle:` 等
+- 高频/关键文案优先用枚举 key：`L10n.tr(.tabGeneral)`（编译期检查）
+
+### 翻译表维护
+
+- 新增中文文案后，在 `L10n.swift` 的 `dict`（中文→英文）里补对应翻译
+- `L10n.s()` 找不到翻译时回退原中文，不会崩溃，但英文模式下会显示中文（需补全）
+- 枚举表 `enumTable` 用于高频文案（状态名、tab 名、通用按钮）
+
+### 语言切换机制
+
+- 通用页「界面语言」下拉（跟随系统 / 中文 / English）
+- 切换调用 `rebuildUI()` 实时重建设置面板（不重启 app）
+- `L10n.update(preference:)` 在 app 启动时（`applicationDidFinishLaunching`）和切换时调用
+- `language` 偏好持久化到 UserDefaults，并随云同步（toJSON/applyJSON）
+
+### ⚠️ 红线
+
+- **禁止新增裸中文字面量到 UI**：Code Review 必查 `title: "` / `withTitle: "` / `.title = "` 是否带 `L10n.s()`
+- 纯英文/纯变量/技术术语（如 `Endpoint`、`Bucket`）可不包
 
 ## Hook 配置
 

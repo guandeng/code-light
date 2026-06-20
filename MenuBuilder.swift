@@ -12,64 +12,64 @@ extension AppDelegate {
 
         // —— CodeLight 应用菜单 ——
         let appMenu = NSMenu(title: appName)
-        appMenu.addItem(withTitle: "关于 \(appName)", action: #selector(showAbout), keyEquivalent: "")
+        appMenu.addItem(withTitle: L10n.s("关于 \(appName)"), action: #selector(showAbout), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "偏好设置...", action: #selector(openSettings), keyEquivalent: ",")
+        appMenu.addItem(withTitle: L10n.s("偏好设置..."), action: #selector(openSettings), keyEquivalent: ",")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "隐藏 \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        let hideOthersItem = NSMenuItem(title: "隐藏其他", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: L10n.s("隐藏 \(appName)"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthersItem = NSMenuItem(title: L10n.s("隐藏其他"), action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthersItem.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(hideOthersItem)
-        appMenu.addItem(withTitle: "显示全部", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: L10n.s("显示全部"), action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "退出 \(appName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L10n.s("退出 \(appName)"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let appMenuItem = NSMenuItem(); appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
         // —— 文件菜单 ——
-        let fileMenu = NSMenu(title: "文件")
-        fileMenu.addItem(withTitle: "重置窗口位置", action: #selector(resetWindowPosition), keyEquivalent: "r")
+        let fileMenu = NSMenu(title: L10n.s("文件"))
+        fileMenu.addItem(withTitle: L10n.s("重置窗口位置"), action: #selector(resetWindowPosition), keyEquivalent: "r")
         fileMenu.addItem(NSMenuItem.separator())
-        fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileMenu.addItem(withTitle: L10n.s("关闭窗口"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         let fileMenuItem = NSMenuItem(); fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
 
         // —— 编辑菜单 ——（必需：NSTextField 的 Cmd+C/V/X/A/Z 依赖主菜单存在这些 selector）
-        let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        let redoItem = editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        let editMenu = NSMenu(title: L10n.s("编辑"))
+        editMenu.addItem(withTitle: L10n.s("撤销"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redoItem = editMenu.addItem(withTitle: L10n.s("重做"), action: Selector(("redo:")), keyEquivalent: "z")
         redoItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "删除", action: #selector(NSText.delete(_:)), keyEquivalent: "")
+        editMenu.addItem(withTitle: L10n.s("剪切"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: L10n.s("复制"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: L10n.s("粘贴"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: L10n.s("删除"), action: #selector(NSText.delete(_:)), keyEquivalent: "")
         editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: L10n.s("全选"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         let editMenuItem = NSMenuItem(); editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
         // —— 视图菜单 ——
-        let viewMenu = NSMenu(title: "视图")
-        viewMenu.addItem(withTitle: "显示/隐藏灯", action: #selector(toggleWindow), keyEquivalent: "t")
-        viewMenu.addItem(withTitle: "切换显示模式", action: #selector(handleDoubleClick(_:)), keyEquivalent: "d")
+        let viewMenu = NSMenu(title: L10n.s("视图"))
+        viewMenu.addItem(withTitle: L10n.s("显示/隐藏灯"), action: #selector(toggleWindow), keyEquivalent: "t")
+        viewMenu.addItem(withTitle: L10n.s("切换显示模式"), action: #selector(handleDoubleClick(_:)), keyEquivalent: "d")
         viewMenu.addItem(NSMenuItem.separator())
-        viewMenu.addItem(withTitle: "今日工作时间线", action: #selector(openTimeline), keyEquivalent: "l")
+        viewMenu.addItem(withTitle: L10n.s("今日工作时间线"), action: #selector(openTimeline), keyEquivalent: "l")
         let viewMenuItem = NSMenuItem(); viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
         // —— 窗口菜单 ——
-        let windowMenu = NSMenu(title: "窗口")
-        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        let windowMenu = NSMenu(title: L10n.s("窗口"))
+        windowMenu.addItem(withTitle: L10n.s("最小化"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: L10n.s("缩放"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         let windowMenuItem = NSMenuItem(); windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
         NSApp.windowsMenu = windowMenu
 
         // —— 帮助菜单 ——
-        let helpMenu = NSMenu(title: "帮助")
-        helpMenu.addItem(withTitle: "\(appName) 帮助", action: #selector(openGitHub), keyEquivalent: "")
-        let checkUpdateItem = helpMenu.addItem(withTitle: "检查更新...", action: #selector(AppDelegate.checkForGHUpdate), keyEquivalent: "")
+        let helpMenu = NSMenu(title: L10n.s("帮助"))
+        helpMenu.addItem(withTitle: L10n.s("\(appName) 帮助"), action: #selector(openGitHub), keyEquivalent: "")
+        let checkUpdateItem = helpMenu.addItem(withTitle: L10n.s("检查更新..."), action: #selector(AppDelegate.checkForGHUpdate), keyEquivalent: "")
         let helpMenuItem = NSMenuItem(); helpMenuItem.submenu = helpMenu
         mainMenu.addItem(helpMenuItem)
         NSApp.helpMenu = helpMenu
@@ -89,7 +89,10 @@ extension AppDelegate {
     }
 
     func buildMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // 复用已有 statusItem（避免语言切换时创建多个图标），无则新建
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        }
         if let button = statusItem?.button {
             button.image = drawMenuIcon(state: "idle")
             button.image?.isTemplate = false
@@ -104,34 +107,34 @@ extension AppDelegate {
         menu.addItem(titleItem)
 
         // 状态标题（不可点击）
-        let stateItem = NSMenuItem(title: "● 空闲", action: nil, keyEquivalent: "")
+        let stateItem = NSMenuItem(title: "● " + L10n.s("空闲"), action: nil, keyEquivalent: "")
         stateItem.isEnabled = false
         menu.addItem(stateItem)
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(withTitle: "显示/隐藏", action: #selector(toggleWindow), keyEquivalent: "w")
-        menu.addItem(withTitle: "设置...", action: #selector(openSettings), keyEquivalent: ",")
+        menu.addItem(withTitle: L10n.s("显示/隐藏"), action: #selector(toggleWindow), keyEquivalent: "w")
+        menu.addItem(withTitle: L10n.s("设置..."), action: #selector(openSettings), keyEquivalent: ",")
 
         // 显示样式子菜单
-        let modeMenu = NSMenu(title: "显示样式")
-        let modes = [("vertical", "竖向"), ("horizontal", "横向"), ("mini", "迷你"), ("edgebar", "边缘栏")]
+        let modeMenu = NSMenu(title: L10n.s("显示样式"))
+        let modes = [("vertical", L10n.s("竖向")), ("horizontal", L10n.s("横向")), ("mini", L10n.s("迷你")), ("edgebar", L10n.s("边缘栏"))]
         for (idx, (key, label)) in modes.enumerated() {
             let item = NSMenuItem(title: label, action: #selector(switchDisplayMode(_:)), keyEquivalent: "")
             item.tag = idx
             if config.displayMode == key { item.state = .on }
             modeMenu.addItem(item)
         }
-        let modeItem = NSMenuItem(title: "显示样式", action: nil, keyEquivalent: "")
+        let modeItem = NSMenuItem(title: L10n.s("显示样式"), action: nil, keyEquivalent: "")
         modeItem.submenu = modeMenu
         menu.addItem(modeItem)
 
-        menu.addItem(withTitle: "重置窗口位置", action: #selector(resetWindowPosition), keyEquivalent: "r")
-        menu.addItem(withTitle: "今日工作时间线", action: #selector(openTimeline), keyEquivalent: "l")
+        menu.addItem(withTitle: L10n.s("重置窗口位置"), action: #selector(resetWindowPosition), keyEquivalent: "r")
+        menu.addItem(withTitle: L10n.s("今日工作时间线"), action: #selector(openTimeline), keyEquivalent: "l")
         menu.addItem(NSMenuItem.separator())
-        let statusCheckUpdateItem = menu.addItem(withTitle: "检查更新...", action: #selector(AppDelegate.checkForGHUpdate), keyEquivalent: "u")
+        let statusCheckUpdateItem = menu.addItem(withTitle: L10n.s("检查更新..."), action: #selector(AppDelegate.checkForGHUpdate), keyEquivalent: "u")
         menu.addItem(withTitle: "GitHub", action: #selector(openGitHub), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "退出 CodeLight", action: #selector(quitApp), keyEquivalent: "q")
+        menu.addItem(withTitle: L10n.s("退出 CodeLight"), action: #selector(quitApp), keyEquivalent: "q")
         statusItem?.menu = menu
     }
 

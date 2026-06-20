@@ -15,7 +15,7 @@ extension SettingsWindowController {
         let contentW = container.frame.width
 
         // --- 分段控件: 已安装 / 发现 ---
-        skillsSegment = NSSegmentedControl(labels: ["已安装", "发现"], trackingMode: .selectOne, target: self, action: #selector(skillsSegmentChanged(_:)))
+        skillsSegment = NSSegmentedControl(labels: [L10n.s("已安装"), L10n.s("发现")], trackingMode: .selectOne, target: self, action: #selector(skillsSegmentChanged(_:)))
         skillsSegment.selectedSegment = 0
         skillsSegment.frame = NSRect(x: 0, y: 0, width: 200, height: 26)
         skillsSegment.sizeToFit()
@@ -39,7 +39,7 @@ extension SettingsWindowController {
         var ry: CGFloat = 0
 
         // 来源选择分段控件
-        installSourceSegment = NSSegmentedControl(labels: ["🌐 市场", "🔗 Git", "📂 目录", "📦 压缩包"], trackingMode: .selectOne, target: self, action: #selector(installSourceChanged(_:)))
+        installSourceSegment = NSSegmentedControl(labels: [L10n.s("🌐 市场"), L10n.s("🔗 Git"), L10n.s("📂 目录"), L10n.s("📦 压缩包")], trackingMode: .selectOne, target: self, action: #selector(installSourceChanged(_:)))
         installSourceSegment.selectedSegment = 0
         installSourceSegment.frame = NSRect(x: 0, y: ry, width: 400, height: 26)
         installSourceSegment.sizeToFit()
@@ -91,7 +91,7 @@ extension SettingsWindowController {
 
         // 刷新按钮
         let refreshBtn = NSButton(frame: NSRect(x: contentW - 148, y: 0, width: 116, height: 60))
-        refreshBtn.title = "🔄 刷新"
+        refreshBtn.title = L10n.s("🔄 刷新")
         refreshBtn.bezelStyle = .rounded
         refreshBtn.font = NSFont.systemFont(ofSize: 12)
         refreshBtn.target = self
@@ -114,7 +114,7 @@ extension SettingsWindowController {
         skillsGitContainer.addSubview(gitField)
 
         let gitBtn = NSButton(frame: NSRect(x: contentW - 148, y: 28, width: 116, height: 26))
-        gitBtn.title = "克隆安装"
+        gitBtn.title = L10n.s("克隆安装")
         gitBtn.bezelStyle = .rounded
         gitBtn.font = NSFont.systemFont(ofSize: 12)
         gitBtn.target = self
@@ -128,7 +128,7 @@ extension SettingsWindowController {
         skillsRepoConfigView.addSubview(skillsDirContainer)
 
         let dirBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26))
-        dirBtn.title = "📂 选择目录导入..."
+        dirBtn.title = L10n.s("📂 选择目录导入...")
         dirBtn.bezelStyle = .rounded
         dirBtn.font = NSFont.systemFont(ofSize: 12)
         dirBtn.target = self
@@ -142,7 +142,7 @@ extension SettingsWindowController {
         skillsRepoConfigView.addSubview(skillsZipContainer)
 
         let zipBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26))
-        zipBtn.title = "📦 选择压缩包导入..."
+        zipBtn.title = L10n.s("📦 选择压缩包导入...")
         zipBtn.bezelStyle = .rounded
         zipBtn.font = NSFont.systemFont(ofSize: 12)
         zipBtn.target = self
@@ -307,12 +307,12 @@ extension SettingsWindowController {
     // MARK: - Refresh Remote
 
     @objc func skillsRefreshRemote(_ sender: Any) {
-        skillsStatusLabel.stringValue = "正在获取远程技能列表..."
+        skillsStatusLabel.stringValue = L10n.s("正在获取远程技能列表...")
         skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
 
         let parts = appDelegate.config.skillsRepoURL.split(separator: "/", maxSplits: 1)
         guard parts.count == 2 else {
-            skillsStatusLabel.stringValue = "仓库地址格式错误，应为 owner/repo"
+            skillsStatusLabel.stringValue = L10n.s("仓库地址格式错误，应为 owner/repo")
             skillsStatusLabel.textColor = NSColor.systemRed
             return
         }
@@ -332,7 +332,7 @@ extension SettingsWindowController {
                     return m
                 }
                 self.rebuildSkillsDiscoverList()
-                self.skillsStatusLabel.stringValue = "发现 \(items.count) 个远程技能"
+                self.skillsStatusLabel.stringValue = L10n.s("发现 \(items.count) 个远程技能")
                 self.skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
 
                 // 异步获取每个技能的描述
@@ -440,7 +440,7 @@ extension SettingsWindowController {
             }
 
         if selectedItems.isEmpty {
-            skillsStatusLabel.stringValue = "没有可用的技能来创建预设"
+            skillsStatusLabel.stringValue = L10n.s("没有可用的技能来创建预设")
             skillsStatusLabel.textColor = NSColor.systemRed
             return
         }
@@ -460,7 +460,7 @@ extension SettingsWindowController {
 
         let name = input.stringValue.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else {
-            skillsStatusLabel.stringValue = "预设名称不能为空"
+            skillsStatusLabel.stringValue = L10n.s("预设名称不能为空")
             skillsStatusLabel.textColor = NSColor.systemRed
             return
         }
@@ -472,7 +472,7 @@ extension SettingsWindowController {
         )
         PresetManager.shared.addPreset(preset)
         skillsSelectedIndices.removeAll()
-        skillsStatusLabel.stringValue = "✅ 已创建预设「\(name)」（\(selectedItems.count) 个技能）"
+        skillsStatusLabel.stringValue = L10n.s("✅ 已创建预设「\(name)」（\(selectedItems.count) 个技能）")
         skillsStatusLabel.textColor = NSColor.systemGreen
         rebuildSkillsList()
     }
@@ -490,7 +490,7 @@ extension SettingsWindowController {
         let idx = sender.tag
         let result = PresetManager.shared.deactivatePreset(at: idx)
         let name = PresetManager.shared.presets[idx].name
-        skillsStatusLabel.stringValue = "预设「\(name)」已停用（移除 \(result.removed) 项）"
+        skillsStatusLabel.stringValue = L10n.s("预设「\(name)」已停用（移除 \(result.removed) 项）")
         skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
         rebuildSkillsList()
     }
@@ -499,7 +499,7 @@ extension SettingsWindowController {
         let idx = sender.tag
         let name = PresetManager.shared.presets[idx].name
         PresetManager.shared.removePreset(at: idx)
-        skillsStatusLabel.stringValue = "已删除预设「\(name)」"
+        skillsStatusLabel.stringValue = L10n.s("已删除预设「\(name)」")
         skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
         rebuildSkillsList()
     }
@@ -519,16 +519,16 @@ extension SettingsWindowController {
             empty.isEditable = false; empty.isBordered = false; empty.backgroundColor = .clear
             empty.font = NSFont.systemFont(ofSize: 12)
             empty.textColor = NSColor.tertiaryLabelColor
-            empty.stringValue = "暂无已安装的技能或命令\n技能目录: ~/.claude/skills/  命令目录: ~/.claude/commands/"
+            empty.stringValue = L10n.s("暂无已安装的技能或命令\n技能目录: ~/.claude/skills/  命令目录: ~/.claude/commands/")
             empty.alignment = .center
             listContainer.addSubview(empty)
-            skillsStatusLabel.stringValue = "已安装 0 个"
+            skillsStatusLabel.stringValue = L10n.s("已安装 0 个")
             adjustSkillsListHeight(listContainer, maxY: 60)
             return
         }
 
         // 筛选分段控件
-        let filterSeg = NSSegmentedControl(labels: ["全部", "技能", "命令"], trackingMode: .selectOne, target: self, action: #selector(installedFilterChanged(_:)))
+        let filterSeg = NSSegmentedControl(labels: [L10n.s("全部"), L10n.s("技能"), L10n.s("命令")], trackingMode: .selectOne, target: self, action: #selector(installedFilterChanged(_:)))
         if installedFilterSegment == nil {
             filterSeg.selectedSegment = 0
             installedFilterSegment = filterSeg
@@ -550,7 +550,7 @@ extension SettingsWindowController {
         let presets = PresetManager.shared.presets
         if !presets.isEmpty || !allItems.isEmpty {
             let addPresetBtn = NSButton(frame: NSRect(x: 0, y: y, width: 120, height: 22))
-            addPresetBtn.title = "＋ 新建预设"
+            addPresetBtn.title = L10n.s("＋ 新建预设")
             addPresetBtn.bezelStyle = .recessed
             addPresetBtn.font = NSFont.systemFont(ofSize: 11)
             addPresetBtn.target = self
@@ -564,7 +564,7 @@ extension SettingsWindowController {
                     let accView = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
 
                     let activateBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 56, height: 24))
-                    activateBtn.title = "激活"
+                    activateBtn.title = L10n.s("激活")
                     activateBtn.bezelStyle = .rounded
                     activateBtn.font = NSFont.systemFont(ofSize: 10)
                     activateBtn.tag = idx
@@ -573,7 +573,7 @@ extension SettingsWindowController {
                     accView.addSubview(activateBtn)
 
                     let deactBtn = NSButton(frame: NSRect(x: 60, y: 0, width: 56, height: 24))
-                    deactBtn.title = "停用"
+                    deactBtn.title = L10n.s("停用")
                     deactBtn.bezelStyle = .rounded
                     deactBtn.font = NSFont.systemFont(ofSize: 10)
                     deactBtn.tag = idx
@@ -582,7 +582,7 @@ extension SettingsWindowController {
                     accView.addSubview(deactBtn)
 
                     let delBtn = NSButton(frame: NSRect(x: 120, y: 0, width: 40, height: 24))
-                    delBtn.title = "删除"
+                    delBtn.title = L10n.s("删除")
                     delBtn.bezelStyle = .rounded
                     delBtn.font = NSFont.systemFont(ofSize: 10)
                     delBtn.contentTintColor = NSColor.systemRed
@@ -667,11 +667,11 @@ extension SettingsWindowController {
             countLabel.isEditable = false; countLabel.isBordered = false; countLabel.backgroundColor = .clear
             countLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
             countLabel.textColor = NSColor.labelColor
-            countLabel.stringValue = "已选 \(skillsSelectedIndices.count) 项"
+            countLabel.stringValue = L10n.s("已选 \(skillsSelectedIndices.count) 项")
             bar.addSubview(countLabel)
 
             let batchDeleteBtn = NSButton(frame: NSRect(x: listW - 200, y: 4, width: 80, height: 24))
-            batchDeleteBtn.title = "批量卸载"
+            batchDeleteBtn.title = L10n.s("批量卸载")
             batchDeleteBtn.bezelStyle = .rounded
             batchDeleteBtn.font = NSFont.systemFont(ofSize: 11)
             batchDeleteBtn.contentTintColor = NSColor.systemRed
@@ -680,7 +680,7 @@ extension SettingsWindowController {
             bar.addSubview(batchDeleteBtn)
 
             let clearBtn = NSButton(frame: NSRect(x: listW - 110, y: 4, width: 80, height: 24))
-            clearBtn.title = "取消选择"
+            clearBtn.title = L10n.s("取消选择")
             clearBtn.bezelStyle = .rounded
             clearBtn.font = NSFont.systemFont(ofSize: 11)
             clearBtn.target = self
@@ -697,7 +697,7 @@ extension SettingsWindowController {
             empty.isEditable = false; empty.isBordered = false; empty.backgroundColor = .clear
             empty.font = NSFont.systemFont(ofSize: 12)
             empty.textColor = NSColor.tertiaryLabelColor
-            empty.stringValue = "当前筛选下无内容"
+            empty.stringValue = L10n.s("当前筛选下无内容")
             empty.alignment = .center
             listContainer.addSubview(empty)
             y += 32
@@ -768,7 +768,7 @@ extension SettingsWindowController {
             }
         }
 
-        skillsStatusLabel.stringValue = "已安装 \(allItems.count) 个（技能 \(skills.count)，命令 \(commands.count)）"
+        skillsStatusLabel.stringValue = L10n.s("已安装 \(allItems.count) 个（技能 \(skills.count)，命令 \(commands.count)）")
         adjustSkillsListHeight(listContainer, maxY: y)
     }
 
@@ -787,7 +787,7 @@ extension SettingsWindowController {
             empty.isEditable = false; empty.isBordered = false; empty.backgroundColor = .clear
             empty.font = NSFont.systemFont(ofSize: 12)
             empty.textColor = NSColor.tertiaryLabelColor
-            empty.stringValue = "点击「🔄 刷新」获取远程技能列表"
+            empty.stringValue = L10n.s("点击「🔄 刷新」获取远程技能列表")
             empty.alignment = .center
             listContainer.addSubview(empty)
             adjustSkillsListHeight(listContainer, maxY: 60)
@@ -840,7 +840,7 @@ extension SettingsWindowController {
         if let content = skillsRemoteContents[item.name], !content.isEmpty {
             performInstall(item: item, content: content)
         } else {
-            sender.title = "安装中..."
+            sender.title = L10n.s("安装中...")
             sender.isEnabled = false
             SkillsGitHubClient.shared.fetchSkillDetail(item) { [weak self] result in
                 guard let self = self else { return }
@@ -848,9 +848,9 @@ extension SettingsWindowController {
                 case .success(let (content, updated)):
                     self.performInstall(item: updated, content: content)
                 case .failure(let err):
-                    self.skillsStatusLabel.stringValue = "安装失败: \(err.description)"
+                    self.skillsStatusLabel.stringValue = L10n.s("安装失败: \(err.description)")
                     self.skillsStatusLabel.textColor = NSColor.systemRed
-                    sender.title = "安装"
+                    sender.title = L10n.s("安装")
                     sender.isEnabled = true
                 }
             }
@@ -863,7 +863,7 @@ extension SettingsWindowController {
             if let idx = skillsRemoteItems.firstIndex(where: { $0.name == item.name }) {
                 skillsRemoteItems[idx].isInstalled = true
             }
-            skillsStatusLabel.stringValue = "✅ 已安装「\(item.name)」"
+            skillsStatusLabel.stringValue = L10n.s("✅ 已安装「\(item.name)」")
             skillsStatusLabel.textColor = NSColor.systemGreen
 
             // 刷新当前视图
@@ -873,7 +873,7 @@ extension SettingsWindowController {
                 rebuildSkillsList()
             }
         } else {
-            skillsStatusLabel.stringValue = "安装失败：写入文件失败"
+            skillsStatusLabel.stringValue = L10n.s("安装失败：写入文件失败")
             skillsStatusLabel.textColor = NSColor.systemRed
         }
     }
@@ -884,12 +884,12 @@ extension SettingsWindowController {
         let allItems = SkillsManager.shared.scanAll()
         let path = sender.identifier?.rawValue ?? ""
         guard !path.isEmpty else {
-            skillsStatusLabel.stringValue = "卸载失败：未找到技能路径"
+            skillsStatusLabel.stringValue = L10n.s("卸载失败：未找到技能路径")
             skillsStatusLabel.textColor = NSColor.systemRed
             return
         }
         guard let item = allItems.first(where: { $0.localPath == path }) else {
-            skillsStatusLabel.stringValue = "卸载失败：技能已不存在，请刷新列表"
+            skillsStatusLabel.stringValue = L10n.s("卸载失败：技能已不存在，请刷新列表")
             skillsStatusLabel.textColor = NSColor.systemOrange
             return
         }
@@ -899,11 +899,11 @@ extension SettingsWindowController {
             if let rIdx = skillsRemoteItems.firstIndex(where: { $0.name.lowercased() == item.name.lowercased() }) {
                 skillsRemoteItems[rIdx].isInstalled = false
             }
-            skillsStatusLabel.stringValue = "已卸载「\(item.name)」"
+            skillsStatusLabel.stringValue = L10n.s("已卸载「\(item.name)」")
             skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
             rebuildSkillsList()
         } else {
-            skillsStatusLabel.stringValue = "卸载失败：删除文件失败"
+            skillsStatusLabel.stringValue = L10n.s("卸载失败：删除文件失败")
             skillsStatusLabel.textColor = NSColor.systemRed
         }
     }
@@ -912,24 +912,24 @@ extension SettingsWindowController {
 
     @objc func skillsGitInstall(_ sender: NSButton) {
         guard let url = skillsGitField?.stringValue, !url.isEmpty else {
-            skillsStatusLabel.stringValue = "请输入 Git 仓库 URL"
+            skillsStatusLabel.stringValue = L10n.s("请输入 Git 仓库 URL")
             skillsStatusLabel.textColor = NSColor.systemRed
             return
         }
-        sender.title = "克隆中..."
+        sender.title = L10n.s("克隆中...")
         sender.isEnabled = false
-        skillsStatusLabel.stringValue = "正在从 Git 仓库克隆..."
+        skillsStatusLabel.stringValue = L10n.s("正在从 Git 仓库克隆...")
         skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             SkillsManager.shared.installFromGit(url: url) { result in
                 DispatchQueue.main.async {
-                    sender.title = "克隆安装"
+                    sender.title = L10n.s("克隆安装")
                     sender.isEnabled = true
                     switch result {
                     case .success(let items):
-                        self.skillsStatusLabel.stringValue = "✅ 从 Git 安装了 \(items.count) 个技能"
+                        self.skillsStatusLabel.stringValue = L10n.s("✅ 从 Git 安装了 \(items.count) 个技能")
                         self.skillsStatusLabel.textColor = NSColor.systemGreen
                         self.rebuildSkillsList()
                     case .failure(let err):
@@ -948,7 +948,7 @@ extension SettingsWindowController {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.title = "选择技能目录"
+        panel.title = L10n.s("选择技能目录")
         panel.prompt = "导入"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -956,7 +956,7 @@ extension SettingsWindowController {
 
         switch SkillsManager.shared.importFromDirectory(path: path) {
         case .success(let items):
-            skillsStatusLabel.stringValue = "✅ 从目录导入了 \(items.count) 个技能"
+            skillsStatusLabel.stringValue = L10n.s("✅ 从目录导入了 \(items.count) 个技能")
             skillsStatusLabel.textColor = NSColor.systemGreen
             rebuildSkillsList()
         case .failure(let err):
@@ -972,13 +972,13 @@ extension SettingsWindowController {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.title = "选择技能压缩包"
+        panel.title = L10n.s("选择技能压缩包")
         panel.prompt = "导入"
         panel.allowedContentTypes = [.init(filenameExtension: "zip")!]
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        skillsStatusLabel.stringValue = "正在解压安装..."
+        skillsStatusLabel.stringValue = L10n.s("正在解压安装...")
         skillsStatusLabel.textColor = NSColor.tertiaryLabelColor
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -987,7 +987,7 @@ extension SettingsWindowController {
                 DispatchQueue.main.async {
                     switch result {
                     case .success(let items):
-                        self.skillsStatusLabel.stringValue = "✅ 从压缩包安装了 \(items.count) 个技能"
+                        self.skillsStatusLabel.stringValue = L10n.s("✅ 从压缩包安装了 \(items.count) 个技能")
                         self.skillsStatusLabel.textColor = NSColor.systemGreen
                         self.rebuildSkillsList()
                     case .failure(let err):
@@ -1054,7 +1054,7 @@ extension SettingsWindowController {
     private func showSkillPreview(_ item: SkillItem) {
         guard let path = item.localPath,
               let content = try? String(contentsOfFile: path, encoding: .utf8) else {
-            skillsStatusLabel.stringValue = "无法读取技能文件"
+            skillsStatusLabel.stringValue = L10n.s("无法读取技能文件")
             skillsStatusLabel.textColor = NSColor.systemRed
             return
         }
@@ -1065,7 +1065,7 @@ extension SettingsWindowController {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
                             styleMask: [.titled, .closable, .resizable],
                             backing: .buffered, defer: false)
-        panel.title = "预览: \(item.name)"
+        panel.title = L10n.s("预览: \(item.name)")
         panel.isReleasedWhenClosed = false
 
         let scrollView = NSScrollView(frame: panel.contentView!.bounds)
