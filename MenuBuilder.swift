@@ -12,17 +12,17 @@ extension AppDelegate {
 
         // —— CodeLight 应用菜单 ——
         let appMenu = NSMenu(title: appName)
-        appMenu.addItem(withTitle: L10n.s("关于 \(appName)"), action: #selector(showAbout), keyEquivalent: "")
+        appMenu.addItem(withTitle: L10n.s("关于") + " \(appName)", action: #selector(showAbout), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: L10n.s("偏好设置..."), action: #selector(openSettings), keyEquivalent: ",")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: L10n.s("隐藏 \(appName)"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: L10n.s("隐藏") + " \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthersItem = NSMenuItem(title: L10n.s("隐藏其他"), action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthersItem.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(hideOthersItem)
         appMenu.addItem(withTitle: L10n.s("显示全部"), action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: L10n.s("退出 \(appName)"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L10n.s("退出") + " \(appName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let appMenuItem = NSMenuItem(); appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 

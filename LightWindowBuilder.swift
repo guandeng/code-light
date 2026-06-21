@@ -185,9 +185,9 @@ extension AppDelegate {
         }
 
         let rightMenu = NSMenu()
-        rightMenu.addItem(withTitle: "设置...", action: #selector(openSettings), keyEquivalent: "")
+        rightMenu.addItem(withTitle: L10n.s("设置..."), action: #selector(openSettings), keyEquivalent: "")
         rightMenu.addItem(NSMenuItem.separator())
-        rightMenu.addItem(withTitle: "退出", action: #selector(quitApp), keyEquivalent: "")
+        rightMenu.addItem(withTitle: L10n.s("退出 CodeLight"), action: #selector(quitApp), keyEquivalent: "")
         view.menu = rightMenu
         // 子视图也设置菜单，确保右键能响应
         for sub in view.subviews { sub.menu = rightMenu }

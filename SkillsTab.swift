@@ -21,7 +21,7 @@ extension SettingsWindowController {
         skillsSegment.sizeToFit()
 
         let segGroup = SettingsGroupView(header: nil, rows: [
-            SettingsRowView(title: "视图", accessory: skillsSegment, isFirst: true, isLast: true),
+            SettingsRowView(title: L10n.s("视图"), accessory: skillsSegment, isFirst: true, isLast: true),
         ])
         segGroup.frame.origin = NSPoint(x: 16, y: y)
         segGroup.autoresizingMask = .width
@@ -57,7 +57,7 @@ extension SettingsWindowController {
         for preset in AppConfig.presetRepos {
             repoPopup.addItem(withTitle: "\(preset.name) (\(preset.owner)/\(preset.repo))")
         }
-        repoPopup.addItem(withTitle: "自定义...")
+        repoPopup.addItem(withTitle: L10n.s("自定义..."))
         repoPopup.target = self
         repoPopup.action = #selector(skillsRepoPopupChanged(_:))
         skillsRepoPopup = repoPopup
@@ -447,10 +447,10 @@ extension SettingsWindowController {
 
         // 弹出输入预设名称的对话框
         let alert = NSAlert()
-        alert.messageText = "新建预设"
-        alert.informativeText = "将 \(selectedItems.count) 个技能归入预设"
-        alert.addButton(withTitle: "创建")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = L10n.s("新建预设")
+        alert.informativeText = L10n.s("将 \(selectedItems.count) 个技能归入预设")
+        alert.addButton(withTitle: L10n.s("创建"))
+        alert.addButton(withTitle: L10n.s("取消"))
 
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         input.placeholderString = "预设名称，如「前端开发」"
@@ -539,7 +539,7 @@ extension SettingsWindowController {
         installedFilterSegment.frame = NSRect(x: 0, y: 0, width: 200, height: 26)
         installedFilterSegment.sizeToFit()
         let filterGroup = SettingsGroupView(header: nil, rows: [
-            SettingsRowView(title: "筛选", accessory: installedFilterSegment, isFirst: true, isLast: true),
+            SettingsRowView(title: L10n.s("筛选"), accessory: installedFilterSegment, isFirst: true, isLast: true),
         ])
         filterGroup.frame.origin = NSPoint(x: 0, y: y)
         filterGroup.autoresizingMask = .width
@@ -597,7 +597,7 @@ extension SettingsWindowController {
                     let subtitle = "\(preset.skillNames.count) 个技能  \(agentIcons)"
 
                     return SettingsRowView(
-                        title: "📦 \(preset.name)",
+                        title: L10n.s("📦 \(preset.name)"),
                         subtitle: subtitle,
                         accessory: accView,
                         isFirst: idx == 0,
@@ -717,7 +717,7 @@ extension SettingsWindowController {
             for group in grouped {
                 let rows = group.items.enumerated().map { (idx, item) -> SettingsRowView in
                     let localPath = item.localPath ?? ""
-                    let btn = SkillsActionButton(title: "卸载", target: self, action: #selector(skillsUninstallItem(_:)))
+                    let btn = SkillsActionButton(title: L10n.s("卸载"), target: self, action: #selector(skillsUninstallItem(_:)))
                     btn.bezelStyle = .rounded
                     btn.font = NSFont.systemFont(ofSize: 11)
                     btn.identifier = NSUserInterfaceItemIdentifier(localPath)
@@ -801,10 +801,10 @@ extension SettingsWindowController {
             let isInstalled = localNames.contains(item.name.lowercased())
             let btn: NSButton
             if isInstalled {
-                btn = SkillsActionButton(title: "已安装", target: nil, action: nil)
+                btn = SkillsActionButton(title: L10n.s("已安装"), target: nil, action: nil)
                 btn.isEnabled = false
             } else {
-                btn = SkillsActionButton(title: "安装", target: self, action: #selector(skillsInstallItem(_:)))
+                btn = SkillsActionButton(title: L10n.s("安装"), target: self, action: #selector(skillsInstallItem(_:)))
                 btn.tag = idx
             }
             btn.bezelStyle = .rounded
@@ -949,7 +949,7 @@ extension SettingsWindowController {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = L10n.s("选择技能目录")
-        panel.prompt = "导入"
+        panel.prompt = L10n.s("导入")
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let path = url.path
@@ -973,7 +973,7 @@ extension SettingsWindowController {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.title = L10n.s("选择技能压缩包")
-        panel.prompt = "导入"
+        panel.prompt = L10n.s("导入")
         panel.allowedContentTypes = [.init(filenameExtension: "zip")!]
 
         guard panel.runModal() == .OK, let url = panel.url else { return }

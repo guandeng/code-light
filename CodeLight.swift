@@ -438,9 +438,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             self.log("[通知] UN权限: \(granted), err: \(String(describing: error))")
         }
-        buildAppMainMenu()
         Database.shared.open()
-        L10n.update(preference: config.language)  // 初始化语言偏好
+        L10n.update(preference: config.language)  // 初始化语言偏好（必须在构建菜单之前）
+        buildAppMainMenu()
         startServer()
         buildMenuBar()
         buildLightWindow()
@@ -475,8 +475,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if hasCodeLightHook(path: home + "/.cursor/settings.json") { return }
 
         let alert = NSAlert()
-        alert.messageText = "配置 Hook"
-        alert.informativeText = "检测到尚未配置任何 AI 编程助手的 Hook，红绿灯无法自动切换状态。\n\n请在「设置 → 配置 Hook」中勾选你使用的工具并应用配置。"
+        alert.messageText = L10n.s("配置 Hook")
+        alert.informativeText = L10n.s("检测到尚未配置任何 AI 编程助手的 Hook，红绿灯无法自动切换状态。\n\n请在「设置 → 配置 Hook」中勾选你使用的工具并应用配置。")
         alert.alertStyle = .informational
         alert.addButton(withTitle: L10n.s("去配置"))
         alert.addButton(withTitle: L10n.s("以后再说"))
@@ -1280,7 +1280,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
             }
         }
 
-        let mascotNames = ["🐂 小牛", "🐱 小猫", "🤖 机器人", "🐴 小马", "🏀 小鸡"]
+        let mascotNames = [L10n.s("🐂 小牛"), L10n.s("🐱 小猫"), L10n.s("🤖 机器人"), L10n.s("🐴 小马"), L10n.s("🏀 小鸡")]
         let mascotIdx = ["cow": 0, "cat": 1, "robot": 2, "horse": 3, "chicken": 4][c.mascotType] ?? 0
         let mascotAcc = SettingsRowView.makePopup(items: mascotNames, selectedIndex: mascotIdx) { [weak self] idx in
             guard let self = self else { return }
@@ -2396,11 +2396,11 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         urlField.lineBreakMode = .byTruncatingMiddle
         webdavURLField = urlField
 
-        let userField = makeStyledField(placeholder: "邮箱或用户名")
+        let userField = makeStyledField(placeholder: L10n.s("邮箱或用户名"))
         userField.stringValue = c.webdavUser
         webdavUserField = userField
 
-        let passField = makeStyledField(secure: true, placeholder: "应用密码（坚果云请使用「第三方应用密码」）")
+        let passField = makeStyledField(secure: true, placeholder: L10n.s("应用密码（坚果云请使用「第三方应用密码」）"))
         passField.stringValue = c.webdavPass
         webdavPassField = passField
 
@@ -2431,7 +2431,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
         y += connectGroup.frame.height + 8
 
         // 密码提示（输入框底部）
-        let passHint = NSTextField(labelWithString: "请在坚果云「安全选项」中生成「第三方应用密码」，不要使用登录密码。")
+        let passHint = NSTextField(labelWithString: L10n.s("请在坚果云「安全选项」中生成「第三方应用密码」，不要使用登录密码。"))
         passHint.font = NSFont.systemFont(ofSize: 10)
         passHint.textColor = NSColor.tertiaryLabelColor
         passHint.lineBreakMode = .byWordWrapping
@@ -2602,8 +2602,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
 
         // 确认覆盖本地配置
         let alert = NSAlert()
-        alert.messageText = "从云端下载"
-        alert.informativeText = "将用云端配置覆盖本地设置，确定继续吗？"
+        alert.messageText = L10n.s("从云端下载")
+        alert.informativeText = L10n.s("将用云端配置覆盖本地设置，确定继续吗？")
         alert.alertStyle = .warning
         alert.addButton(withTitle: L10n.s("覆盖本地"))
         alert.addButton(withTitle: L10n.s("取消"))
@@ -2894,8 +2894,8 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate, NSGestureR
 
         // 确认覆盖本地配置
         let alert = NSAlert()
-        alert.messageText = "从云端下载"
-        alert.informativeText = "将用云端配置覆盖本地设置，确定继续吗？"
+        alert.messageText = L10n.s("从云端下载")
+        alert.informativeText = L10n.s("将用云端配置覆盖本地设置，确定继续吗？")
         alert.alertStyle = .warning
         alert.addButton(withTitle: L10n.s("覆���本地"))
         alert.addButton(withTitle: L10n.s("取消"))
