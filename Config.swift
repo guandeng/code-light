@@ -216,6 +216,7 @@ struct AppConfig {
             "webdavConfigName": webdavConfigName,
             "skillsRepoURL": skillsRepoURL,
             "skillsCatalogPath": skillsCatalogPath,
+            "hookToolIndex": hookToolIndex,
             "allowRules": AlwaysAllowManager.shared.rules,
             "denyRules": BlacklistManager.shared.rules,
         ]
@@ -280,6 +281,7 @@ struct AppConfig {
         if let v = dict["webdavAutoSync"] as? Bool { webdavAutoSync = v }
         if let v = dict["skillsRepoURL"] as? String { skillsRepoURL = v }
         if let v = dict["skillsCatalogPath"] as? String { skillsCatalogPath = v }
+        if let v = dict["hookToolIndex"] as? Int { hookToolIndex = v }
         // 同步规则：覆盖本地规则文件
         if let allows = dict["allowRules"] as? [String] {
             AlwaysAllowManager.shared.replaceRules(allows)

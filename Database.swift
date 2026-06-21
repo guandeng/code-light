@@ -83,37 +83,37 @@ class Database {
     }
 
     func setSecret(_ key: String, _ value: String) {
-        ensureOpen()
-        guard let db = db else { return }
-        var stmt: OpaquePointer?
-        let sql = "INSERT INTO secrets (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
-        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-            sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
-            sqlite3_step(stmt)
-        }
-        sqlite3_finalize(stmt)
+        // 写入 Keychain（不再落 SQLite 明文）
+        KeychainStore.shared.set(value, for: key)
     }
 
     func getSecret(_ key: String) -> String? {
+        // 1. 优先 Keychain
+        if let v = KeychainStore.shared.get(key) { return v }
+        // 2. 回退 SQLite 旧明文（迁移：读到就迁入 Keychain 并清除明文）
         ensureOpen()
         guard let db = db else { return nil }
         var stmt: OpaquePointer?
-        var result: String?
+        var legacy: String?
         let sql = "SELECT value FROM secrets WHERE key=?"
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
             sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
             if sqlite3_step(stmt) == SQLITE_ROW {
                 if let cstr = sqlite3_column_text(stmt, 0) {
-                    result = String(cString: cstr)
+                    legacy = String(cString: cstr)
                 }
             }
         }
         sqlite3_finalize(stmt)
-        return result
+        if let legacy = legacy, !legacy.isEmpty {
+            KeychainStore.shared.set(legacy, for: key)
+            sqliteMigrateDelete(key)
+        }
+        return legacy
     }
 
-    func deleteSecret(_ key: String) {
+    /// 迁移专用：清除 SQLite 旧明文（独立于 deleteSecret，避免循环）
+    private func sqliteMigrateDelete(_ key: String) {
         ensureOpen()
         guard let db = db else { return }
         var stmt: OpaquePointer?
@@ -123,6 +123,12 @@ class Database {
             sqlite3_step(stmt)
         }
         sqlite3_finalize(stmt)
+    }
+
+    func deleteSecret(_ key: String) {
+        KeychainStore.shared.delete(key)
+        // 同时清除 SQLite 可能的旧明文残留
+        sqliteMigrateDelete(key)
     }
 
     func close() {
